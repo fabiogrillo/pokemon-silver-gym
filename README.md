@@ -174,14 +174,14 @@ docker-compose up
 
 ### Phase 1 — PyBoy Exploration & RAM Reading
 
-- [ ] Open `notebooks/01_explore_pyboy.ipynb`
-- [ ] Read PyBoy documentation: https://github.com/Baekalfen/PyBoy
-- [ ] Run the game headless: `PyBoy("pokemon_rom.gbc", window="null")`
-- [ ] Advance frames: `pyboy.tick(1, render=False)`
-- [ ] Capture a screenshot: `pyboy.screen.ndarray`
-- [ ] Read a RAM address: `pyboy.memory[0xDCB8]` (player X position)
-- [ ] Run the game with SDL window, play manually, print RAM values while moving
-- [ ] Verify empirically: Player X (`0xDCB8`), Player Y (`0xDCB7`), Map ID (`0xDCB6`)
+- [x] Open `notebooks/01_explore_pyboy.ipynb`
+- [x] Read PyBoy documentation: https://github.com/Baekalfen/PyBoy
+- [x] Run the game headless: `PyBoy("pokemon_rom.gbc", window="null")`
+- [x] Advance frames: `pyboy.tick(1, render=False)`
+- [x] Capture a screenshot: `pyboy.screen.ndarray`
+- [x] Read a RAM address: `pyboy.memory[0xDCB8]` (player X position)
+- [x] Run the game with SDL window, play manually, print RAM values while moving
+- [x] Verify empirically: Player X (`0xDCB8`), Player Y (`0xDCB7`), Map ID (`0xDCB6`)
 - [ ] Verify: Badge bits (`0xD857`) — bit 0 should flip after beating Falkner
 - [ ] Verify: Battle flag (`0xD116`) — changes when entering/exiting a battle
 - [ ] Verify: Lead Pokemon HP (`0xDCFC`) and Max HP (`0xDCFE`)

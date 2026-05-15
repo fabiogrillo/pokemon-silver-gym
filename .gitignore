@@ -11,3 +11,10 @@ __pycache__/
 
 # Model checkpoints
 saves/*.pkl
+
+*.ram
+*.rtc
+*.state
+runs/
+saves/*.state
+!saves/totodile.state
