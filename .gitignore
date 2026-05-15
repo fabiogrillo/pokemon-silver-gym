@@ -1,1 +1,13 @@
+# Bytecode files
+__pycache__/
+*.pyc   
 *.gbc
+
+# virtual environment
+.venv/
+
+# Jupyter Notebook checkpoints
+/runs
+
+# Model checkpoints
+saves/*.pkl
