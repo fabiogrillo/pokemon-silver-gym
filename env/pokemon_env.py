@@ -60,11 +60,11 @@ class PokemonEnv(gym.Env):
             self.visited_tiles.add(tile)
 
         # Compute the reward based on RAM state changes and exploration
-        reward = self.compute_reward(ram_state, new_tile)  
+        reward, reward_info = self.compute_reward(ram_state, new_tile)
 
         # Example termination condition: episode ends if we win (zephyr badge) or lose (HP drops to 0 in overworld)
         terminated = ram_state["zephyr"] or (ram_state["hp_ratio"] <= 0 and ram_state["battle_type"] == 0)  # Episode ends if we win or lose
-        
+
         # Return the observation, reward, done, and info
         obs = np.array([
             ram_state["map_bank"] / 255,  # Normalize to [0,1]
@@ -82,7 +82,15 @@ class PokemonEnv(gym.Env):
             min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles by an estimated total of 512 unique tiles in the game
         ], dtype=np.float32)
         observation = obs  # or screen, or a combination of both
-        info = {}
+        info = {
+            "reward_exploration": reward_info["exploration"],
+            "reward_events":      reward_info["events"],
+            "reward_penalties":   reward_info["penalties"],
+            "visited_tiles":      len(self.visited_tiles),
+            "hp_ratio":           ram_state["hp_ratio"],
+            "map_number":         ram_state["map_number"],
+            "in_battle":          int(ram_state["battle_type"] > 0),
+        }
 
         self.prev_party_count = ram_state["party_count"]  # Start with 1 Pokemon in party
         self.prev_flag_rival  = ram_state["flag_rival_cherrygrove"]
@@ -95,7 +103,7 @@ class PokemonEnv(gym.Env):
         return observation, reward, terminated, truncated, info
         
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
         """
         Reset the environment to the initial state and return the initial observation.
         """
@@ -150,43 +158,45 @@ class PokemonEnv(gym.Env):
 
     def compute_reward(self, ram_state, new_tile):
         """
-        Compute the reward based on changes in the RAM state. 
+        Compute the reward based on changes in the RAM state.
+        Returns (total_reward, breakdown_dict) for TensorBoard monitoring.
         """
-        reward = 0.0
-        
+        events = 0.0
+        exploration = 0.0
+        penalties = 0.0
+
         # Reward for winning (getting the Zephyr badge)
         if ram_state["zephyr"]:
-            reward += 1000.0  # Large reward for winning the game
+            events += 1000.0
 
         if ram_state["flag_rival_cherrygrove"] and not self.prev_flag_rival:
-            reward += 200.0  # Reward for beating the rival in Cherrygrove
+            events += 200.0
 
         if ram_state["flag_elm_mr_pokemon"] and not self.prev_flag_elm:
-            reward += 200.0  # Reward for receiving the egg from Mr. Pokemon
+            events += 200.0
 
         if ram_state["flag_sprout_tower_2"] and not self.prev_flag_sprout2:
-            reward += 200.0  # Reward for entering Sprout Tower 2F
-        
+            events += 200.0
+
         if ram_state["flag_sprout_tower_3"] and not self.prev_flag_sprout3:
-            reward += 200.0  # Reward for entering Sprout Tower 3F
+            events += 200.0
+
+        # Small reward for catching a pokemon
+        if self.prev_party_count < ram_state["party_count"]:
+            events += 50.0
+
+        # Exploration reward for visiting new tiles
+        if new_tile:
+            exploration += 1.0
+        else:
+            exploration -= 0.01
 
         # Penalty for losing (HP drops to 0 in overworld)
         if ram_state["hp_ratio"] <= 0 and ram_state["battle_type"] == 0:
-            reward -= 50.0  # Penalty for losing
-
-        # Small reward for Catching a pokemon
-        if self.prev_party_count < ram_state["party_count"]:
-            reward += 50.0  # Reward for catching a new Pokemon
-
-        # Small exploration reward for visiting new tiles
-        if new_tile:
-            reward += 1.0  # Reward for visiting a new tile
-
-        # Punishment for not moving (staying on the same tile)
-        if not new_tile:
-            reward -= 0.05  # Small penalty for not exploring
+            penalties -= 50.0
 
         # Step penalty to encourage shorter solutions
-        reward -= 0.01  # Small penalty per step to encourage efficiency
+        penalties -= 0.01
 
-        return reward
+        total = events + exploration + penalties
+        return total, {"events": events, "exploration": exploration, "penalties": penalties}

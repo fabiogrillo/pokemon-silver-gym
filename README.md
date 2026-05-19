@@ -197,20 +197,20 @@ docker-compose up
 - [x] Write `env/ram_reader.py` — `RAMReader` class, `read_all() -> dict`
 - [x] Write `env/pyboy_wrapper.py` — `PyBoyWrapper`: `__init__`, `step(action)`, `reset()`, `capture_gif()`
 - [x] Write `env/pokemon_env.py` — `PokemonEnv(gymnasium.Env)`: `observation_space`, `action_space`, `step()`, `reset()`
-- [ ] Test environment with random agent (1000 steps, no crash, reward printed)
-- [ ] Write `tests/test_ram_reader.py` — test known values (badge count = 0 at start)
-- [ ] Write `tests/test_env.py` — test reset shape, step reward, done flag
-- [ ] Run `pytest tests/` — all pass
-- [ ] Commit
+- [x] Test environment with random agent (1000 steps, no crash, reward printed)
+- [x] Write `tests/test_ram_reader.py` — test known values (badge count = 0 at start)
+- [x] Write `tests/test_env.py` — test reset shape, step reward, done flag
+- [x] Run `pytest tests/` — all pass
+- [x] Commit
 
 ---
 
 ### Phase 3 — RL Agent: Training Loop
 
-- [ ] Read SB3 docs: https://stable-baselines3.readthedocs.io/
-- [ ] Write `agents/rl/config.py` — all hyperparameters as constants
-- [ ] Write `make_env(rank)` helper function (seeded env factory)
-- [ ] Write `agents/rl/train.py` — `SubprocVecEnv` (4–8 envs) + PPO + `CheckpointCallback`
+- [x] Read SB3 docs: https://stable-baselines3.readthedocs.io/
+- [x] Write `agents/rl/config.py` — all hyperparameters as constants
+- [x] Write `make_env(rank)` helper function (seeded env factory)
+- [x] Write `agents/rl/train.py` — `SubprocVecEnv` (4–8 envs) + PPO + `CheckpointCallback`
 - [ ] Launch TensorBoard: `tensorboard --logdir ./runs/`
 - [ ] Run training 100k steps — verify TensorBoard shows `ep_rew_mean` and `ep_len_mean`
 - [ ] Debug if reward is always 0 or episode length always max (reward/RAM reader issue)
