@@ -182,20 +182,20 @@ docker-compose up
 - [x] Read a RAM address: `pyboy.memory[0xDCB8]` (player X position)
 - [x] Run the game with SDL window, play manually, print RAM values while moving
 - [x] Verify empirically: Player X (`0xDCB8`), Player Y (`0xDCB7`), Map ID (`0xDCB6`)
-- [ ] Verify: Badge bits (`0xD857`) — bit 0 should flip after beating Falkner
-- [ ] Verify: Battle flag (`0xD116`) — changes when entering/exiting a battle
-- [ ] Verify: Lead Pokemon HP (`0xDCFC`) and Max HP (`0xDCFE`)
-- [ ] Create initial save state after choosing Totodile in New Bark Town → `saves/initial_state.pkl`
-- [ ] Commit notebook with findings
+- [x] Verify: Badge bits (`0xD857`) — bit 0 should flip after beating Falkner
+- [x] Verify: Battle flag (`0xD116`) — changes when entering/exiting a battle
+- [x] Verify: Lead Pokemon HP (`0xDCFC`) and Max HP (`0xDCFE`)
+- [x] Create initial save state after choosing Totodile in New Bark Town → `saves/initial_state.pkl`
+- [x] Commit notebook with findings
 
 ---
 
 ### Phase 2 — Gymnasium Environment
 
-- [ ] Read Gymnasium documentation: https://gymnasium.farama.org/ ("Your first environment")
-- [ ] Write `env/actions.py` — `ACTIONS` list + `gymnasium.spaces.Discrete(8)`
-- [ ] Write `env/ram_reader.py` — `RAMReader` class, `read_all() -> dict`
-- [ ] Write `env/pyboy_wrapper.py` — `PyBoyWrapper`: `__init__`, `step(action)`, `reset()`, `capture_gif()`
+- [x] Read Gymnasium documentation: https://gymnasium.farama.org/ ("Your first environment")
+- [x] Write `env/actions.py` — `ACTIONS` list + `gymnasium.spaces.Discrete(8)`
+- [x] Write `env/ram_reader.py` — `RAMReader` class, `read_all() -> dict`
+- [x] Write `env/pyboy_wrapper.py` — `PyBoyWrapper`: `__init__`, `step(action)`, `reset()`, `capture_gif()`
 - [ ] Write `env/pokemon_env.py` — `PokemonEnv(gymnasium.Env)`: `observation_space`, `action_space`, `step()`, `reset()`
 - [ ] Test environment with random agent (1000 steps, no crash, reward printed)
 - [ ] Write `tests/test_ram_reader.py` — test known values (badge count = 0 at start)
