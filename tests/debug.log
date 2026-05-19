@@ -1,0 +1,44 @@
+UserWarning: Using SDL2 binaries from pysdl2-dll 2.32.0
+Loaded state from saves/totodile.state
+Reset OK - obs shape: (13,)
+Step    0 | x=  8 y=  5 | Reward: +0.99 | Total: +0.99 | battle=0 | Terminated: False
+Step  250 | x= 13 y=  8 | Reward: -0.06 | Total: -0.36 | battle=0 | Terminated: False
+Step  500 | x= 10 y= 14 | Reward: -0.06 | Total: +4.59 | battle=0 | Terminated: False
+Step  750 | x=  8 y= 16 | Reward: +0.99 | Total: -0.96 | battle=0 | Terminated: False
+Step 1000 | x= 14 y= 15 | Reward: -0.06 | Total: +0.84 | battle=0 | Terminated: False
+Step 1250 | x= 15 y= 16 | Reward: -0.06 | Total: -3.66 | battle=0 | Terminated: False
+Step 1500 | x=  6 y= 14 | Reward: -0.06 | Total: -12.36 | battle=0 | Terminated: False
+Step 1750 | x= 11 y= 16 | Reward: -0.06 | Total: -26.31 | battle=0 | Terminated: False
+Step 2000 | x= 13 y= 14 | Reward: -0.06 | Total: -39.21 | battle=0 | Terminated: False
+Step 2250 | x= 12 y= 16 | Reward: -0.06 | Total: -54.21 | battle=0 | Terminated: False
+Step 2500 | x=  9 y= 14 | Reward: -0.06 | Total: -69.21 | battle=0 | Terminated: False
+Step 2750 | x=  8 y= 12 | Reward: -0.06 | Total: -83.16 | battle=0 | Terminated: False
+Step 3000 | x= 10 y= 16 | Reward: -0.06 | Total: -93.96 | battle=0 | Terminated: False
+Step 3250 | x= 11 y= 16 | Reward: -0.06 | Total: -105.81 | battle=0 | Terminated: False
+Step 3500 | x= 13 y= 14 | Reward: -0.06 | Total: -120.81 | battle=0 | Terminated: False
+Step 3750 | x=  9 y= 16 | Reward: -0.06 | Total: -133.71 | battle=0 | Terminated: False
+Step 4000 | x= 15 y= 12 | Reward: -0.06 | Total: -147.66 | battle=0 | Terminated: False
+Step 4250 | x= 12 y=  5 | Reward: -0.06 | Total: -156.36 | battle=0 | Terminated: False
+Step 4500 | x= 14 y= 16 | Reward: -0.06 | Total: -166.11 | battle=0 | Terminated: False
+Step 4750 | x= 14 y=  9 | Reward: -0.06 | Total: -176.91 | battle=0 | Terminated: False
+Step 5000 | x= 13 y= 14 | Reward: -0.06 | Total: -191.91 | battle=0 | Terminated: False
+Step 5250 | x=  8 y= 12 | Reward: -0.06 | Total: -204.81 | battle=0 | Terminated: False
+Step 5500 | x= 10 y= 15 | Reward: -0.06 | Total: -218.76 | battle=0 | Terminated: False
+Step 5750 | x=  7 y= 15 | Reward: -0.06 | Total: -233.76 | battle=0 | Terminated: False
+Step 6000 | x=  7 y= 15 | Reward: -0.06 | Total: -248.76 | battle=0 | Terminated: False
+Step 6250 | x= 11 y=  6 | Reward: -0.06 | Total: -263.76 | battle=0 | Terminated: False
+Step 6500 | x= 11 y=  7 | Reward: -0.06 | Total: -276.66 | battle=0 | Terminated: False
+Step 6750 | x= 12 y=  0 | Reward: -0.06 | Total: -285.36 | battle=0 | Terminated: False
+Step 7000 | x= 13 y=  3 | Reward: -0.06 | Total: -297.21 | battle=0 | Terminated: False
+Step 7250 | x= 12 y=  0 | Reward: -0.06 | Total: -304.86 | battle=0 | Terminated: False
+Step 7500 | x=  6 y=  6 | Reward: -0.06 | Total: -313.56 | battle=0 | Terminated: False
+Step 7750 | x= 12 y=  6 | Reward: -0.06 | Total: -325.41 | battle=0 | Terminated: False
+Step 8000 | x= 14 y=  6 | Reward: -0.06 | Total: -340.41 | battle=0 | Terminated: False
+Step 8250 | x=  9 y=  8 | Reward: -0.06 | Total: -355.41 | battle=0 | Terminated: False
+Step 8500 | x=  7 y=  8 | Reward: -0.06 | Total: -358.86 | battle=0 | Terminated: False
+Step 8750 | x= 10 y=  8 | Reward: -0.06 | Total: -362.31 | battle=0 | Terminated: False
+Step 9000 | x=  9 y=  9 | Reward: -0.06 | Total: -373.11 | battle=0 | Terminated: False
+Step 9250 | x=  8 y=  8 | Reward: -0.06 | Total: -383.91 | battle=0 | Terminated: False
+Step 9500 | x=  7 y=  5 | Reward: -0.06 | Total: -387.36 | battle=0 | Terminated: False
+Step 9750 | x=  5 y=  2 | Reward: -0.06 | Total: -389.76 | battle=0 | Terminated: False
+Test completed successfully.

@@ -12,10 +12,16 @@ class PokemonEnv(gym.Env):
     The environment provides a discrete action space corresponding to the Game Boy buttons,
     and an observation space that can be defined as needed (e.g., RAM state, screen pixels).
     """
-    def __init__(self, rom_path, state_path="../saves/totodile.state", headless=True):
+    def __init__(self, rom_path, state_path="../saves/totodile.state", headless=True, gif_dir="../runs/gifs/", render_mode=None):
         self.pyboy = PyBoyWrapper(rom_path, state_path, headless)
         self.ram_reader = RAMReader(self.pyboy.pyboy)
+        self.render_mode = render_mode
+        self.gif_dir = gif_dir
+        self.episode_count = 0
         self.steps = 0  # Step counter for episode length tracking
+
+        self.capture_gif = render_mode == "rgb_array"
+        self.gif_frames = []  # Store frames for GIF creation if needed
 
         # Previous state tracking for reward calculation
         self.prev_party_count = 1  # Start with 1 Pokemon in party
@@ -41,6 +47,9 @@ class PokemonEnv(gym.Env):
         """
         # Send the action to the emulator and advance it
         screen = self.pyboy.step(action)
+
+        if self.capture_gif:
+            self.gif_frames.append(screen.copy())
         
         # Read the new RAM state
         ram_state = self.ram_reader.read_all()
@@ -92,18 +101,24 @@ class PokemonEnv(gym.Env):
         """
         self.pyboy.reset()
 
+        self.episode_count += 1 
         self.steps = 0  # Reset step counter
 
-        # Previous state tracking for reward calculation
-        self.prev_party_count = 1  # Start with 1 Pokemon in party
-        self.prev_flag_rival  = 0
-        self.prev_flag_elm    = 0
-        self.prev_flag_sprout2 = 0
-        self.prev_flag_sprout3 = 0
+        if self.gif_frames:
+            self.pyboy.capture_gif(f"{self.gif_dir}/episode_{self.episode_count:04d}.gif", self.gif_frames)
+            self.gif_frames = []  # Clear frames for the next episode
+
         self.visited_tiles = set()  # Track visited tiles for exploration reward
 
-        # Read initial RAM state for observation and reward calculations
-        ram_state = self.ram_reader.read_all()  # Read initial RAM state for reward calculations
+        # Read initial RAM state — must happen before prev_flag initialization
+        ram_state = self.ram_reader.read_all()
+
+        # Use actual RAM values as baseline so flags only trigger on change, not on non-zero
+        self.prev_party_count  = 1
+        self.prev_flag_rival   = ram_state["flag_rival_cherrygrove"]
+        self.prev_flag_elm     = ram_state["flag_elm_mr_pokemon"]
+        self.prev_flag_sprout2 = ram_state["flag_sprout_tower_2"]
+        self.prev_flag_sprout3 = ram_state["flag_sprout_tower_3"]
         obs = np.array([
             ram_state["map_bank"] / 255,  # Normalize to [0,1]
             ram_state["map_number"] / 255,  # Normalize to [0,1]
@@ -122,11 +137,10 @@ class PokemonEnv(gym.Env):
 
         return obs, {}
 
-    def render(self, mode='human'):
-        """
-        Render the current state of the environment. This could be the emulator screen or a visualization of the RAM state.
-        """
-        pass
+    def render(self):
+        if self.render_mode == "rgb_array":
+            return self.pyboy.pyboy.screen.ndarray
+        return None
 
     def close(self):
         """

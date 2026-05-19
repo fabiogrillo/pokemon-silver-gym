@@ -196,7 +196,7 @@ docker-compose up
 - [x] Write `env/actions.py` — `ACTIONS` list + `gymnasium.spaces.Discrete(8)`
 - [x] Write `env/ram_reader.py` — `RAMReader` class, `read_all() -> dict`
 - [x] Write `env/pyboy_wrapper.py` — `PyBoyWrapper`: `__init__`, `step(action)`, `reset()`, `capture_gif()`
-- [ ] Write `env/pokemon_env.py` — `PokemonEnv(gymnasium.Env)`: `observation_space`, `action_space`, `step()`, `reset()`
+- [x] Write `env/pokemon_env.py` — `PokemonEnv(gymnasium.Env)`: `observation_space`, `action_space`, `step()`, `reset()`
 - [ ] Test environment with random agent (1000 steps, no crash, reward printed)
 - [ ] Write `tests/test_ram_reader.py` — test known values (badge count = 0 at start)
 - [ ] Write `tests/test_env.py` — test reset shape, step reward, done flag

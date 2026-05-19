@@ -9,7 +9,7 @@ class PyBoyWrapper:
         Initialize the PyBoy emulator and RAM reader.
         """
         self.state_path = state_path
-        self.pyboy = PyBoy(rom_path, window="headless" if headless else "SDL2")
+        self.pyboy = PyBoy(rom_path, window="null" if headless else "SDL2", sound=False)
 
         # Load state in state_path if it exists, otherwise start a new game and save the initial state.
         try:
@@ -25,9 +25,9 @@ class PyBoyWrapper:
         Take and int action and converts it to a button press in PyBoy, 
         then advance the emulator by one frame.
         """
-        button_name = ACTIONS[action]
-        self.pyboy.button(button_name)
+        self.pyboy.button_press(ACTIONS[action])
         self.pyboy.tick(count=n)
+        self.pyboy.button_release(ACTIONS[action])
 
         return self.pyboy.screen.ndarray
 
