@@ -7,7 +7,7 @@ from agents.rl import config
 
 def evaluate(model_path: str, n_episodes: int, render: bool):
     env = PokemonEnv(config.ROM_PATH, config.STATE_PATH, headless=not render)
-    model = PPO.load(model_path, env=env)
+    model = PPO.load(model_path, env=env, device="cpu")
 
     results = []
 
@@ -19,7 +19,7 @@ def evaluate(model_path: str, n_episodes: int, render: bool):
         max_tiles = 0
 
         while not terminated and not truncated:
-            action, _ = model.predict(obs, deterministic=True)
+            action, _ = model.predict(obs, deterministic=False)
             obs, reward, terminated, truncated, info = env.step(action)
 
             total_reward += reward

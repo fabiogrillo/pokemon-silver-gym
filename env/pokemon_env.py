@@ -4,7 +4,7 @@ from .pyboy_wrapper import PyBoyWrapper
 from .ram_reader import RAMReader
 from .actions import ACTION_SPACE
 
-MAX_STEPS = 2**14  # Max steps per episode to prevent infinite loops
+MAX_STEPS = 2**14  # Max steps per episode — must match config.py
 
 class PokemonEnv(gym.Env):
     """
@@ -27,9 +27,10 @@ class PokemonEnv(gym.Env):
         self.prev_party_count = 1  # Start with 1 Pokemon in party
         self.prev_flag_rival  = 0
         self.prev_flag_elm    = 0
-        self.prev_flag_sprout2 = 0
-        self.prev_flag_sprout3 = 0
-        self.visited_tiles = set()  # Track visited tiles for exploration reward
+        self.visited_tiles = set()   # Track visited tiles for exploration reward
+        self.visited_maps  = set()   # Track visited (bank, map) pairs for map transition reward
+        self.prev_map_bank   = 0
+        self.prev_map_number = 0
 
         # Define action and observation spaces
         self.action_space = ACTION_SPACE
@@ -37,7 +38,7 @@ class PokemonEnv(gym.Env):
         self.observation_space = gym.spaces.Box(
             low = 0.0,
             high=1.0,
-            shape=(13,),
+            shape=(11,),
             dtype=np.float32
         )
 
@@ -77,8 +78,6 @@ class PokemonEnv(gym.Env):
             ram_state["hp_ratio"],
             ram_state["flag_rival_cherrygrove"] / 255,  # Normalize to [0,1]
             ram_state["flag_elm_mr_pokemon"] / 255,  # Normalize to [0,1]
-            ram_state["flag_sprout_tower_2"] / 255,  # Normalize to [0,1]
-            ram_state["flag_sprout_tower_3"] / 255,  # Normalize to [0,1]
             min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles by an estimated total of 512 unique tiles in the game
         ], dtype=np.float32)
         observation = obs  # or screen, or a combination of both
@@ -92,11 +91,11 @@ class PokemonEnv(gym.Env):
             "in_battle":          int(ram_state["battle_type"] > 0),
         }
 
-        self.prev_party_count = ram_state["party_count"]  # Start with 1 Pokemon in party
+        self.prev_party_count = ram_state["party_count"]
         self.prev_flag_rival  = ram_state["flag_rival_cherrygrove"]
         self.prev_flag_elm    = ram_state["flag_elm_mr_pokemon"]
-        self.prev_flag_sprout2 = ram_state["flag_sprout_tower_2"]
-        self.prev_flag_sprout3 = ram_state["flag_sprout_tower_3"]
+        self.prev_map_bank   = ram_state["map_bank"]
+        self.prev_map_number = ram_state["map_number"]
 
         self.steps += 1
         truncated = self.steps >= MAX_STEPS
@@ -116,7 +115,8 @@ class PokemonEnv(gym.Env):
             self.pyboy.capture_gif(f"{self.gif_dir}/episode_{self.episode_count:04d}.gif", self.gif_frames)
             self.gif_frames = []  # Clear frames for the next episode
 
-        self.visited_tiles = set()  # Track visited tiles for exploration reward
+        self.visited_tiles = set()
+        self.visited_maps  = set()
 
         # Read initial RAM state — must happen before prev_flag initialization
         ram_state = self.ram_reader.read_all()
@@ -125,8 +125,10 @@ class PokemonEnv(gym.Env):
         self.prev_party_count  = 1
         self.prev_flag_rival   = ram_state["flag_rival_cherrygrove"]
         self.prev_flag_elm     = ram_state["flag_elm_mr_pokemon"]
-        self.prev_flag_sprout2 = ram_state["flag_sprout_tower_2"]
-        self.prev_flag_sprout3 = ram_state["flag_sprout_tower_3"]
+        self.prev_map_bank   = ram_state["map_bank"]
+        self.prev_map_number = ram_state["map_number"]
+        self.visited_maps.add((ram_state["map_bank"], ram_state["map_number"]))
+        
         obs = np.array([
             ram_state["map_bank"] / 255,  # Normalize to [0,1]
             ram_state["map_number"] / 255,  # Normalize to [0,1]
@@ -138,8 +140,6 @@ class PokemonEnv(gym.Env):
             ram_state["hp_ratio"],
             ram_state["flag_rival_cherrygrove"] / 255,  # Normalize to [0,1]
             ram_state["flag_elm_mr_pokemon"] / 255,  # Normalize to [0,1]
-            ram_state["flag_sprout_tower_2"] / 255,  # Normalize to [0,1]
-            ram_state["flag_sprout_tower_3"] / 255,  # Normalize to [0,1]
             min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles by an estimated total of 512 unique tiles in the game
         ], dtype=np.float32)
 
@@ -169,21 +169,37 @@ class PokemonEnv(gym.Env):
         if ram_state["zephyr"]:
             events += 1000.0
 
-        if ram_state["flag_rival_cherrygrove"] and not self.prev_flag_rival:
+        # 0xD88E bit 6: falling edge (1->0) — EVENT_RIVAL_CHERRYGROVE_CITY (flag 1726), sprite visibility cleared after rival beaten
+        RIVAL_BIT = 0x40
+        if not (ram_state["flag_rival_cherrygrove"] & RIVAL_BIT) and (self.prev_flag_rival & RIVAL_BIT):
             events += 200.0
 
-        if ram_state["flag_elm_mr_pokemon"] and not self.prev_flag_elm:
-            events += 200.0
+        # 0xD7BA bit 6 (0x40): rising edge — player picked up egg from Mr. Pokemon (flag 30)
+        MR_POKEMON_BIT = 0x40
+        if (ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT) and not (self.prev_flag_elm & MR_POKEMON_BIT):
+            events += 100.0
 
-        if ram_state["flag_sprout_tower_2"] and not self.prev_flag_sprout2:
-            events += 200.0
-
-        if ram_state["flag_sprout_tower_3"] and not self.prev_flag_sprout3:
+        # 0xD7BA bit 7 (0x80): rising edge — egg delivered to Elm (flag 31)
+        ELM_BIT = 0x80
+        if (ram_state["flag_elm_mr_pokemon"] & ELM_BIT) and not (self.prev_flag_elm & ELM_BIT):
             events += 200.0
 
         # Small reward for catching a pokemon
         if self.prev_party_count < ram_state["party_count"]:
             events += 50.0
+
+        # Reward for entering a map never visited before this episode
+        # map_bank = map group index (matches pret/pokegold map_constants.asm group order)
+        # DUNGEONS group = 3: SPROUT_TOWER_1F=1, SPROUT_TOWER_2F=2, SPROUT_TOWER_3F=3
+        current_map = (ram_state["map_bank"], ram_state["map_number"])
+        if current_map != (self.prev_map_bank, self.prev_map_number):
+            if current_map not in self.visited_maps:
+                exploration += 10.0
+                if current_map == (3, 2):    # SPROUT_TOWER_2F
+                    events += 100.0
+                elif current_map == (3, 3):  # SPROUT_TOWER_3F
+                    events += 150.0
+                self.visited_maps.add(current_map)
 
         # Exploration reward for visiting new tiles
         if new_tile:

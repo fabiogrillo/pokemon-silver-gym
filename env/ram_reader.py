@@ -45,11 +45,11 @@ class RAMReader:
         #   - beat the rival in Cherrygrove     → flag_rival_cherrygrove
         #   - receive the egg from Mr. Pokemon  → flag_elm_mr_pokemon
         #   - enter Sprout Tower 2F / 3F        → flag_sprout_tower_2/3
-        flag_rival_cherrygrove = self.pyboy.memory[0xD8CA]  # "Met rival in Cherrygrove"
-        flag_elm_mr_pokemon    = self.pyboy.memory[0xD7BD]  # Elm quest / Mr. Pokemon discovery
-        flag_sprout_tower_2    = self.pyboy.memory[0xD85C]  # Sprout Tower 2F
-        flag_sprout_tower_3    = self.pyboy.memory[0xD85D]  # Sprout Tower 3F
-        
+        # 0xD88E bit 6 (0x40): starts as 1, cleared to 0 after beating rival on Route 29
+        flag_rival_cherrygrove = self.pyboy.memory[0xD88E]
+        # 0xD7BA bit 7 (0x80): set to 1 during Elm lab sequence (egg/police/pokeball)
+        flag_elm_mr_pokemon    = self.pyboy.memory[0xD7BA]
+
         return {
             "x": x,
             "y": y,
@@ -68,6 +68,4 @@ class RAMReader:
             "hp_ratio": hp_ratio,
             "flag_rival_cherrygrove": flag_rival_cherrygrove,
             "flag_elm_mr_pokemon": flag_elm_mr_pokemon,
-            "flag_sprout_tower_2": flag_sprout_tower_2,
-            "flag_sprout_tower_3": flag_sprout_tower_3,
         }
