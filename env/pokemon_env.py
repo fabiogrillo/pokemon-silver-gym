@@ -116,7 +116,7 @@ class PokemonEnv(gym.Env):
             self.gif_frames = []  # Clear frames for the next episode
 
         self.visited_tiles = set()
-        self.visited_maps  = set()
+        # self.visited_maps  = set()
 
         # Read initial RAM state — must happen before prev_flag initialization
         ram_state = self.ram_reader.read_all()
@@ -194,7 +194,7 @@ class PokemonEnv(gym.Env):
         current_map = (ram_state["map_bank"], ram_state["map_number"])
         if current_map != (self.prev_map_bank, self.prev_map_number):
             if current_map not in self.visited_maps:
-                exploration += 10.0
+                exploration += 20.0
                 if current_map == (3, 2):    # SPROUT_TOWER_2F
                     events += 100.0
                 elif current_map == (3, 3):  # SPROUT_TOWER_3F
@@ -204,8 +204,6 @@ class PokemonEnv(gym.Env):
         # Exploration reward for visiting new tiles
         if new_tile:
             exploration += 1.0
-        else:
-            exploration -= 0.01
 
         # Penalty for losing (HP drops to 0 in overworld)
         if ram_state["hp_ratio"] <= 0 and ram_state["battle_type"] == 0:
