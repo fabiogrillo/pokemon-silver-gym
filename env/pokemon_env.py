@@ -29,8 +29,10 @@ class PokemonEnv(gym.Env):
         self.prev_flag_elm    = 0
         self.visited_tiles = set()   # Track visited tiles for exploration reward
         self.visited_maps  = set()   # Track visited (bank, map) pairs for map transition reward
+        self.episode_maps = set()  # Track maps visited within the current episode for exploration reward
         self.prev_map_bank   = 0
         self.prev_map_number = 0
+        self.prev_battle_type = 0 # Track battle state to detect transitions in/out of battle
 
         # Define action and observation spaces
         self.action_space = ACTION_SPACE
@@ -96,7 +98,7 @@ class PokemonEnv(gym.Env):
         self.prev_flag_elm    = ram_state["flag_elm_mr_pokemon"]
         self.prev_map_bank   = ram_state["map_bank"]
         self.prev_map_number = ram_state["map_number"]
-
+        self.prev_battle_type = ram_state["battle_type"]
         self.steps += 1
         truncated = self.steps >= MAX_STEPS
         return observation, reward, terminated, truncated, info
@@ -117,6 +119,7 @@ class PokemonEnv(gym.Env):
 
         self.visited_tiles = set()
         # self.visited_maps  = set()
+        self.episode_maps = set()  # Reset episode-specific visited maps
 
         # Read initial RAM state — must happen before prev_flag initialization
         ram_state = self.ram_reader.read_all()
@@ -127,6 +130,7 @@ class PokemonEnv(gym.Env):
         self.prev_flag_elm     = ram_state["flag_elm_mr_pokemon"]
         self.prev_map_bank   = ram_state["map_bank"]
         self.prev_map_number = ram_state["map_number"]
+        self.prev_battle_type = ram_state["battle_type"]
         self.visited_maps.add((ram_state["map_bank"], ram_state["map_number"]))
         
         obs = np.array([
@@ -184,22 +188,44 @@ class PokemonEnv(gym.Env):
         if (ram_state["flag_elm_mr_pokemon"] & ELM_BIT) and not (self.prev_flag_elm & ELM_BIT):
             events += 200.0
 
+        # Falling edge: exited battle while alive → trainer defeated or wild battle survived
+        if self.prev_battle_type > 0 and ram_state["battle_type"] == 0 and ram_state["hp_ratio"] > 0:
+            events += 15.0
+                
         # Small reward for catching a pokemon
         if self.prev_party_count < ram_state["party_count"]:
             events += 50.0
 
-        # Reward for entering a map never visited before this episode
-        # map_bank = map group index (matches pret/pokegold map_constants.asm group order)
-        # DUNGEONS group = 3: SPROUT_TOWER_1F=1, SPROUT_TOWER_2F=2, SPROUT_TOWER_3F=3
+        # Reward for entering a map never visited before (one-shot per training lifetime)
+        # map_bank = map group index from pret/pokegold map_constants.asm
+        # (26,10)=Mr.Pokemon house, (3,2)=Sprout Tower 2F, (3,3)=Sprout Tower 3F — all empirically verified
         current_map = (ram_state["map_bank"], ram_state["map_number"])
         if current_map != (self.prev_map_bank, self.prev_map_number):
             if current_map not in self.visited_maps:
                 exploration += 20.0
-                if current_map == (3, 2):    # SPROUT_TOWER_2F
+                if current_map == (26, 10):    # MR_POKEMON_HOUSE
+                    events += 80.0
+                elif current_map == (3, 2):    # SPROUT_TOWER_2F
                     events += 100.0
-                elif current_map == (3, 3):  # SPROUT_TOWER_3F
+                elif current_map == (3, 3):    # SPROUT_TOWER_3F
                     events += 150.0
+                # elif current_map == (26, 2):   # VIOLET_CITY_WEST
+                #    events += 60.0
+                # elif current_map == (10, 5):   # VIOLET_CITY_MAIN
+                #    events += 80.0
+                elif current_map == (10, 7):   # VIOLET_CITY_GYM
+                    events += 400.0
                 self.visited_maps.add(current_map)
+
+            # Reward for visiting new tiles within the episode to encourage exploration (one-shot per tile per episode)
+            if current_map not in self.episode_maps:
+                if current_map == (26,1): # Route 31
+                    events += 20.0
+                elif current_map == (26,2): # Violet City West
+                    events += 30.0
+                elif current_map == (10,5): # Violet City Main
+                    events += 40.0
+                self.episode_maps.add(current_map)
 
         # Exploration reward for visiting new tiles
         if new_tile:

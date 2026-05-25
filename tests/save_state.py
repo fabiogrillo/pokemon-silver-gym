@@ -3,16 +3,20 @@ Lancia il gioco a 3x velocità con finestra SDL2.
 Chiudi la finestra con il tasto X per salvare lo state e uscire.
 
 Uso:
-    python tests/save_state.py before_rival
-    python tests/save_state.py before_elm
-    python tests/save_state.py before_sprout2
+    python tests/save_state.py <nome>           (carica da start.state)
+    python tests/save_state.py <nome> <load>    (carica da saves/<load>.state)
+
+Esempi:
+    python tests/save_state.py mid_route30
+    python tests/save_state.py sprout_tower_2f mid_route30
 """
 import sys
 import os
 from pyboy import PyBoy
 
-SAVE_NAME = sys.argv[1] if len(sys.argv) > 1 else "checkpoint"
-LOAD_PATH = "saves/before_elm.state"
+SAVE_NAME = sys.argv[1] if len(sys.argv) > 1 else "nuovo"
+LOAD_NAME = sys.argv[2] if len(sys.argv) > 2 else "start"
+LOAD_PATH = f"saves/{LOAD_NAME}.state"
 SAVE_PATH = f"saves/{SAVE_NAME}.state"
 
 pyboy = PyBoy("pokemon_rom.gbc", window="SDL2", sound=False)

@@ -2,7 +2,7 @@ import numpy as np
 from agents.rl import config
 from env.pokemon_env import PokemonEnv
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, VecNormalize
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 
 
@@ -29,17 +29,28 @@ class InfoLoggerCallback(BaseCallback):
         self._buffers = {k: [] for k in self._keys}
 
 
-def make_env(rank):
+def make_env(rank, state_path):
     def _init():
-        env = PokemonEnv(config.ROM_PATH, config.STATE_PATH, headless=True)
+        env = PokemonEnv(config.ROM_PATH, state_path, headless=True)
         env.reset(seed=rank)
         return env
     return _init
 
 
 if __name__ == "__main__":
-    vec_env = SubprocVecEnv([make_env(i) for i in range(config.N_ENVS)])
+    assert sum(n for _, n in config.CURRICULUM_STATES) == config.N_ENVS, \
+        f"CURRICULUM_STATES counts must sum to N_ENVS ({config.N_ENVS})"
+
+    env_fns = []
+    rank = 0
+    for state_path, n in config.CURRICULUM_STATES:
+        for _ in range(n):
+            env_fns.append(make_env(rank, state_path))
+            rank += 1
+
+    vec_env = SubprocVecEnv(env_fns)
     vec_env = VecMonitor(vec_env)
+    vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=True, clip_obs=10.0, gamma=config.GAMMA)
 
     model = PPO("MlpPolicy", vec_env, verbose=1,
                 learning_rate=config.LEARNING_RATE,
