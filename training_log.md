@@ -146,29 +146,63 @@ Quick reference for all training strategies attempted, results, and lessons lear
 
 ---
 
-## PPO_10 — Per-episode route waypoints + gamma=0.995 (NEXT RUN)
+## PPO_10 — Per-episode route waypoints + gamma=0.995 (2026-05-24)
 - 100M steps, 8 envs, ent_coef=0.05, **gamma=0.995**, lr=3e-4
 - Curriculum: invariato (2×start + 2×mid_route30 + 2×before_elm_delivery + 2×violet_city)
-- **New**: `episode_maps` set, reset ogni episodio — rewards per route traversal che sparano una volta per episodio (non once per lifetime):
-  - Route 31 (26,1): +20/episode
-  - Violet City West (26,2): +30/episode (rimosso dal blocco one-shot, solo +20 one-shot generico rimane)
-  - Violet City Main (10,5): +40/episode (rimosso dal blocco one-shot)
-  - Gym (10,7): rimane +400 one-shot (prevenire hacking)
-- Gamma 0.99→0.995: orizzonte effettivo da ~100 a ~200 step. 0.995^500 ≈ 0.08 vs 0.99^500 ≈ 0.007 — 10× più signal dal badge verso le decisioni di navigazione da start.state
-- Expected: start.state env inizia a ricevere gradient signal dai waypoints di Violet City. Badge da start.state nella seconda metà del training.
-- Success criteria: reward_events trending up da inizio training, ep_rew_mean stabile senza regressione, badge ottenuto da eval su start.state
+- **New**: `episode_maps` set, reset ogni episodio — per-episode waypoints:
+  - Cherrygrove (26,3): +25/episode
+  - Route 31 (26,1): +50/episode
+  - Violet City West (26,2): +80/episode
+  - Violet City Main (10,5): +100/episode
+  - Gym (10,7): +200/episode + rimane +400 one-shot
+- Battle win reward (+15) ancora presente da PPO_9 — non rimosso
+- **Eval da start.state (10 episodi)**: badge=0/10, avg reward=+983, avg tiles=101 — battle grinding confermato: agent macina wild battles vicino a New Bark Town invece di navigare
+- **Lesson**: battle win reward crea local optima devastante: +15/vittoria near start è più prevedibile dei waypoint distanti. Tiles=101 è la firma del grinding (pochi tile, molti step in battaglia). Rimuovere completamente il battle win reward.
 
 ---
 
-## Strategies To Try (After PPO_10)
+## PPO_11 — Removed battle win + gamma=0.999 + ent_coef=0.08 (2026-05-24 → 2026-05-26)
+- 100M steps, 8 envs, **ent_coef=0.08** (era 0.05), **gamma=0.999**, lr=3e-4
+- Curriculum: invariato (2×start + 2×mid_route30 + 2×before_elm_delivery + 2×violet_city)
+- **Rimosso**: battle win reward (commentato in compute_reward)
+- Per-episode waypoints invariati da PPO_10
+- **Result**: ep_rew_mean=280–284 (stabile, no regressione). reward_events=0.0108 smoothed (solo Elm delivery dai curriculum envs). value_loss=0.0079 (migliore di sempre). entropy=-2.04 stabile per tutta la run. in_battle=0.075 (grinding eliminato). visited_tiles smoothed=155.
+- **Eval da start.state (10 episodi)**: badge=0/10, avg reward=+162.5±43.8, avg tiles=314.3±32.1, avg steps=16384 (tutti troncati, nessun episodio termina). Reward ≈ tiles − step_penalty: nessun waypoint event in quasi tutti gli episodi.
+- **Lesson**: infrastruttura perfetta (no collapse, no grinding, value_loss record), ma credit assignment irrisolto. L'agente esplora ~314 tile ma non naviga direzionalmente verso Violet City. I per-episode waypoints (+25/+50/+80/+100) non sono abbastanza forti da trainare la policy a percorrere 800+ step in modo consistente. Serve un curriculum bridge in Route 31.
 
-### If PPO_10 succeeds (badge obtained from start.state):
+---
+
+## Save states — aggiornati (2026-05-26)
+| File | Posizione | Uso curriculum |
+|------|-----------|---------------|
+| `start.state` | New Bark Town (24,4) | env 0-1 (PPO_12) |
+| `mid_route30.state` | Cherrygrove/Route 30 (26,3), uovo preso | env 2 (PPO_12) |
+| `route_31.state` | Route 31 (26,1) | env 3 (PPO_12) — nuovo bridge |
+| `before_elm_delivery.state` | Lab Elm (24,5), naming done | env 4-5 (PPO_12) |
+| `violet_city.state` | Violet City (10,5), fuori dal PC, squadra curata, 5 pokemon | env 6-7 (PPO_12) |
+| `violet_city_gym.state` | Violet City Gym (10,7), 2 passi dentro | rimosso dal curriculum |
+
+---
+
+## PPO_12 — route_31.state bridge curriculum (NEXT RUN)
+- 100M steps, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4 (invariati)
+- **Curriculum**: 2×start + 1×mid_route30 + **1×route_31** + 2×before_elm_delivery + 2×violet_city
+- route_31.state: salvato manualmente il 2026-05-26 da save_state.py, mappa (26,1) verificata
+- Reward invariato rispetto a PPO_11
+- Rationale: route_31 come bridge dimezza il gap di navigazione da start.state. violet_city torna a 2 (come in PPO_9, erano quegli env a ottenere il badge). mid_route30 ridotto a 1 (coperto dalla catena start→route_31).
+- Success criteria: reward_events trending up da inizio, visited_tiles > 300 stabile, badge da violet_city.state entro 50M steps, badge da start.state entro fine run.
+
+---
+
+## Strategies To Try (After PPO_12)
+
+### If PPO_12 succeeds (badge obtained from start.state):
 - Valutazione quantitativa: badge rate su 100 episodi da start.state
 - Passare all'agente LLM (Phase 5 del plan) per il confronto
 
-### If PPO_10 fails (waypoints raggiunti ma no badge da start):
-- Aggiungere route_31.state come curriculum state bridge (Opzione C)
-- Oppure aumentare gamma a 0.999
+### If PPO_12 fails (route_31 envs raggiungono gym ma start.state no):
+- Aggiungere un secondo bridge (es. violet_city_west.state o un punto su Route 29)
+- Oppure aumentare ulteriormente i per-episode waypoints per i primi segmenti del percorso
 
 ### Ruled out / do not retry
 - Revisited tile penalty (PPO_2 lesson)
@@ -181,3 +215,4 @@ Quick reference for all training strategies attempted, results, and lessons lear
 - 3×before_elm_delivery senza VecNormalize (troppa varianza di return, causa regressione — PPO_6 lesson)
 - violet_city_gym.state nel curriculum (gym milestone non può sparare per quell'env — mappa già in visited_maps all'init — PPO_8 lesson)
 - Battle reward proporzionale a HP (catena causale troppo lunga, doppia lettura RAM nello stesso step sempre 0)
+- Battle win reward flat +15 (crea local optima: grinding near start.state > navigare verso waypoint distanti — PPO_10 lesson)

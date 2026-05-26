@@ -189,8 +189,8 @@ class PokemonEnv(gym.Env):
             events += 200.0
 
         # Falling edge: exited battle while alive → trainer defeated or wild battle survived
-        if self.prev_battle_type > 0 and ram_state["battle_type"] == 0 and ram_state["hp_ratio"] > 0:
-            events += 15.0
+        # if self.prev_battle_type > 0 and ram_state["battle_type"] == 0 and ram_state["hp_ratio"] > 0:
+        #    events += 15.0
                 
         # Small reward for catching a pokemon
         if self.prev_party_count < ram_state["party_count"]:
@@ -219,12 +219,16 @@ class PokemonEnv(gym.Env):
 
             # Reward for visiting new tiles within the episode to encourage exploration (one-shot per tile per episode)
             if current_map not in self.episode_maps:
-                if current_map == (26,1): # Route 31
-                    events += 20.0
-                elif current_map == (26,2): # Violet City West
-                    events += 30.0
-                elif current_map == (10,5): # Violet City Main
-                    events += 40.0
+                if current_map == (26, 3):    # CHERRYGROVE / ROUTE_30_WEST (nuovo, ~150 step da start)
+                    events += 25.0
+                elif current_map == (26, 1):  # ROUTE_31
+                    events += 50.0            # era +20
+                elif current_map == (26, 2):  # VIOLET_CITY_WEST
+                    events += 80.0            # era +30
+                elif current_map == (10, 5):  # VIOLET_CITY_MAIN
+                    events += 100.0           # era +40
+                elif current_map == (10, 7):  # VIOLET_CITY_GYM (aggiunto, per-episode)
+                    events += 200.0           # era assente (solo +400 one-shot)
                 self.episode_maps.add(current_map)
 
         # Exploration reward for visiting new tiles

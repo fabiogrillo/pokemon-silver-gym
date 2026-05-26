@@ -6,7 +6,8 @@ N_ENVS = 8  # Total parallel environments — must equal sum of counts in CURRIC
 # Curriculum learning: (state_path, n_envs) pairs. Counts must sum to N_ENVS.
 CURRICULUM_STATES = [
     ("saves/start.state",               2),  # learn the full path from scratch
-    ("saves/mid_route30.state",         2),  # egg picked up, Cherrygrove area, Elm delivery ahead
+    ("saves/mid_route30.state",         1),  # egg picked up, Cherrygrove area, Elm delivery ahead
+    ("saves/route_31.state",            1),  # Route 31, test battle reward and map transition detection
     ("saves/before_elm_delivery.state", 2),  # naming done, Elm reward fires at first action
     ("saves/violet_city.state",         2),  # in front of Pokemon Center in Violet City, test map transition detection
     ("saves/violet_city_gym.state",     0),  # inside Violet City Gym, test battle reward and badge detection
@@ -17,9 +18,9 @@ LEARNING_RATE = 3e-4
 N_STEPS = 2048  # Number of steps to run in each environment per policy rollout
 BATCH_SIZE = 64 # Minibatch size for updating the policy
 N_EPOCHS = 10   # Number of epochs to update the policy
-GAMMA = 0.995    # Discount factor
+GAMMA = 0.999    # Discount factor
 GAE_LAMBDA = 0.95  # GAE lambda parameter
-ENT_COEF = 0.05  # Entropy coefficient for exploration
+ENT_COEF = 0.08  # Entropy coefficient for exploration
 
 # Training
 TOTAL_TIMESTEPS = 100_000_000 # Total number of timesteps to train on
