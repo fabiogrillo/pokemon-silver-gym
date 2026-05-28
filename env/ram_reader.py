@@ -36,6 +36,7 @@ class RAMReader:
         #   DA4C/DA4D = party slot 0 HP  (always valid, persists between battles)
         #   CB1C/CB1D = active combat HP (only meaningful while battle_type > 0)
         lead_hp     = (self.pyboy.memory[0xDA4C] << 8) | self.pyboy.memory[0xDA4D]
+        lead_level  = self.pyboy.memory[0xDA49]  # Added: Lead Pokemon level for better state representation 
         lead_max_hp = (self.pyboy.memory[0xDA4E] << 8) | self.pyboy.memory[0xDA4F]
         battle_hp   = (self.pyboy.memory[0xCB1C] << 8) | self.pyboy.memory[0xCB1D]
         hp_ratio    = lead_hp / lead_max_hp if lead_max_hp > 0 else 0.0
@@ -49,6 +50,16 @@ class RAMReader:
         flag_rival_cherrygrove = self.pyboy.memory[0xD88E]
         # 0xD7BA bit 7 (0x80): set to 1 during Elm lab sequence (egg/police/pokeball)
         flag_elm_mr_pokemon    = self.pyboy.memory[0xD7BA]
+
+        # ── Enemy Pokemon (valid only when battle_type > 0)
+        # Source: DataCrystal — https://datacrystal.tcrf.net/wiki/Pokémon_Gold_and_Silver/RAM_map
+        # $D0FC = Enemy Level
+        # $D0FF/$D100 = Enemy current HP (2-byte big-endian)
+        # $D101/$D102 = Enemy total HP   (2-byte big-endian)
+        enemy_lead_level = self.pyboy.memory[0xD0FC]
+        enemy_hp         = (self.pyboy.memory[0xD0FF] << 8) | self.pyboy.memory[0xD100]
+        enemy_max_hp     = (self.pyboy.memory[0xD101] << 8) | self.pyboy.memory[0xD102]
+        enemy_hp_ratio   = enemy_hp / enemy_max_hp if enemy_max_hp > 0 else 0.0
 
         return {
             "x": x,
@@ -68,4 +79,9 @@ class RAMReader:
             "hp_ratio": hp_ratio,
             "flag_rival_cherrygrove": flag_rival_cherrygrove,
             "flag_elm_mr_pokemon": flag_elm_mr_pokemon,
+            "lead_level": lead_level,
+            "enemy_lead_level": enemy_lead_level,
+            "enemy_hp": enemy_hp,
+            "enemy_max_hp": enemy_max_hp,
+            "enemy_hp_ratio": enemy_hp_ratio,
         }

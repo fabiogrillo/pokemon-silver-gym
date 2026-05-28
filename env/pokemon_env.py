@@ -4,7 +4,7 @@ from .pyboy_wrapper import PyBoyWrapper
 from .ram_reader import RAMReader
 from .actions import ACTION_SPACE
 
-MAX_STEPS = 2**14  # Max steps per episode — must match config.py
+MAX_STEPS = 2**16  # Max steps per episode — must match config.py
 
 class PokemonEnv(gym.Env):
     """
@@ -32,6 +32,7 @@ class PokemonEnv(gym.Env):
         self.episode_maps = set()  # Track maps visited within the current episode for exploration reward
         self.prev_map_bank   = 0
         self.prev_map_number = 0
+        self.prev_hp_ratio   = 1.0
         self.prev_battle_type = 0 # Track battle state to detect transitions in/out of battle
 
         # Define action and observation spaces
@@ -40,7 +41,7 @@ class PokemonEnv(gym.Env):
         self.observation_space = gym.spaces.Box(
             low = 0.0,
             high=1.0,
-            shape=(11,),
+            shape=(14,),
             dtype=np.float32
         )
 
@@ -80,7 +81,10 @@ class PokemonEnv(gym.Env):
             ram_state["hp_ratio"],
             ram_state["flag_rival_cherrygrove"] / 255,  # Normalize to [0,1]
             ram_state["flag_elm_mr_pokemon"] / 255,  # Normalize to [0,1]
-            min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles by an estimated total of 512 unique tiles in the game
+            ram_state["lead_level"] / 100.0,        # Normalize lead Pokemon level to [0,1]
+            ram_state["enemy_lead_level"] / 100.0,  # Normalize enemy lead Pokemon level to [0,1] (0xD0FC, 0 when not in battle)
+            ram_state["enemy_hp_ratio"],             # Enemy HP ratio (0xD0FF/D101, 0 when not in battle)
+            min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles
         ], dtype=np.float32)
         observation = obs  # or screen, or a combination of both
         info = {
@@ -99,6 +103,7 @@ class PokemonEnv(gym.Env):
         self.prev_map_bank   = ram_state["map_bank"]
         self.prev_map_number = ram_state["map_number"]
         self.prev_battle_type = ram_state["battle_type"]
+        self.prev_hp_ratio    = ram_state["hp_ratio"]
         self.steps += 1
         truncated = self.steps >= MAX_STEPS
         return observation, reward, terminated, truncated, info
@@ -131,6 +136,7 @@ class PokemonEnv(gym.Env):
         self.prev_map_bank   = ram_state["map_bank"]
         self.prev_map_number = ram_state["map_number"]
         self.prev_battle_type = ram_state["battle_type"]
+        self.prev_hp_ratio    = ram_state["hp_ratio"]
         self.visited_maps.add((ram_state["map_bank"], ram_state["map_number"]))
         
         obs = np.array([
@@ -144,7 +150,10 @@ class PokemonEnv(gym.Env):
             ram_state["hp_ratio"],
             ram_state["flag_rival_cherrygrove"] / 255,  # Normalize to [0,1]
             ram_state["flag_elm_mr_pokemon"] / 255,  # Normalize to [0,1]
-            min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles by an estimated total of 512 unique tiles in the game
+            ram_state["lead_level"] / 100.0,        # Normalize lead Pokemon level to [0,1]
+            ram_state["enemy_lead_level"] / 100.0,  # Normalize enemy lead Pokemon level to [0,1] (0xD0FC, 0 when not in battle)
+            ram_state["enemy_hp_ratio"],             # Enemy HP ratio (0xD0FF/D101, 0 when not in battle)
+            min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles
         ], dtype=np.float32)
 
         return obs, {}
@@ -196,6 +205,10 @@ class PokemonEnv(gym.Env):
         if self.prev_party_count < ram_state["party_count"]:
             events += 50.0
 
+        # if HP raised significantly out of battle, it means we healed at a Pokemon Center or used a healing item — both good signs of progress
+        if ram_state["hp_ratio"] - self.prev_hp_ratio > 0.4 and ram_state["battle_type"] == 0:
+            events += 30.0
+
         # Reward for entering a map never visited before (one-shot per training lifetime)
         # map_bank = map group index from pret/pokegold map_constants.asm
         # (26,10)=Mr.Pokemon house, (3,2)=Sprout Tower 2F, (3,3)=Sprout Tower 3F — all empirically verified
@@ -240,7 +253,7 @@ class PokemonEnv(gym.Env):
             penalties -= 50.0
 
         # Step penalty to encourage shorter solutions
-        penalties -= 0.01
+        penalties -= 0.001
 
         total = events + exploration + penalties
         return total, {"events": events, "exploration": exploration, "penalties": penalties}

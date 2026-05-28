@@ -15,7 +15,7 @@ CURRICULUM_STATES = [
 
 # PPO - Principal Hyperparameters
 LEARNING_RATE = 3e-4
-N_STEPS = 2048  # Number of steps to run in each environment per policy rollout
+N_STEPS = 4096  # Number of steps to run in each environment per policy rollout
 BATCH_SIZE = 64 # Minibatch size for updating the policy
 N_EPOCHS = 10   # Number of epochs to update the policy
 GAMMA = 0.999    # Discount factor

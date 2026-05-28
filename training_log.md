@@ -184,13 +184,37 @@ Quick reference for all training strategies attempted, results, and lessons lear
 
 ---
 
-## PPO_12 — route_31.state bridge curriculum (NEXT RUN)
+## PPO_12 — route_31.state bridge curriculum (2026-05-26 → 2026-05-27)
 - 100M steps, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4 (invariati)
 - **Curriculum**: 2×start + 1×mid_route30 + **1×route_31** + 2×before_elm_delivery + 2×violet_city
 - route_31.state: salvato manualmente il 2026-05-26 da save_state.py, mappa (26,1) verificata
 - Reward invariato rispetto a PPO_11
-- Rationale: route_31 come bridge dimezza il gap di navigazione da start.state. violet_city torna a 2 (come in PPO_9, erano quegli env a ottenere il badge). mid_route30 ridotto a 1 (coperto dalla catena start→route_31).
-- Success criteria: reward_events trending up da inizio, visited_tiles > 300 stabile, badge da violet_city.state entro 50M steps, badge da start.state entro fine run.
+- **Result**: ep_rew_mean finale 231–238 (declino lieve negli ultimi rollout). reward_events smoothed 0.0095 a fine run (era 0.0571 a 46% — il picco mid-training è dovuto al gym one-shot +400 esaurito, + Elm delivery da curriculum). in_battle smoothed 0.1845 (più alto di PPO_11 a causa del route_31 con encounter rate elevato). visited_tiles smoothed 176. Badge mai ottenuto.
+- **Eval da start.state (10 episodi)**: badge=0/10, avg reward=+62.0±81.0, avg tiles=224.7±85.8. Alta varianza (std±81) suggerisce policy non ancora stabile sulla navigazione dal punto di partenza.
+- **Lesson**: tutti i waypoint del percorso sparano (Cherrygrove, Route 31, Violet City Main), ma il badge richiede battere Falkner — e il Pokemon lead è a livello 5. L'agente non ha informazione sul proprio livello nell'obs space, quindi non può valutare se è abbastanza forte per la palestra. Il route_31 bridge migliora il segnale di navigazione (reward_events peak più alto di PPO_11 in mid-training) ma non risolve il battle competence problem.
+
+---
+
+## PPO_13 — Lead level in obs + heal reward + MAX_STEPS×4 (2026-05-27 → 2026-05-28)
+- 100M steps, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4 (invariati)
+- Curriculum: invariato (2×start + 1×mid_route30 + 1×route_31 + 2×before_elm_delivery + 2×violet_city)
+- **New obs feature**: `lead_level / 100.0` aggiunto all'obs vector (dim 11 → 12). RAM address: **0xDA49** (offset +0x1F da wPartyMon1=0xDA2A). Verificato empiricamente: start.state → lead_level=5 (Totodile lv5). Nota: indirizzo inizialmente impostato a 0xDA4B (byte Unknown nella struct) — corretto a 0xDA49 prima del training.
+- **New reward**: heal reward +30 quando `hp_ratio - prev_hp_ratio > 0.4` fuori battaglia → incentiva uso Centro Pokémon prima della palestra.
+- **MAX_STEPS**: 2^14 → 2^16 = 65,536 (4× più lungo). N_STEPS: 2048 → 4096 (doubled).
+- **Result**: ep_rew_mean finale 62–66 (calo vs PPO_12 ~234 in TensorBoard). reward_events smoothed 0.0028 (quasi azzerato — waypoint e gym quasi mai raggiunti). value_loss stabile. Badge mai raggiunto.
+- **Eval da start.state (10 episodi, MAX_STEPS=16,384 ridotto)**: badge=0/10, avg reward=+241.8, avg tiles=246.2.
+- **Lesson**: il calo di ep_rew_mean è un artefatto di MAX_STEPS 4×: episodi più lunghi accumulano più step penalty (-0.01 × 65k = -655 max/ep vs -163 prima). L'eval con MAX_STEPS ridotto mostra +241.8 vs PPO_12 +62.0 — l'agente esplora di più. Il vero problema: step penalty -0.01 è eccessiva per episodi da 65k step e schiaccia il reward signal. Cambiata a -0.001 per PPO_14.
+
+---
+
+## PPO_14 — Enemy obs + step penalty -0.001 (2026-05-28 → ...)
+- 100M steps, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4 (invariati)
+- Curriculum: invariato (2×start + 1×mid_route30 + 1×route_31 + 2×before_elm_delivery + 2×violet_city)
+- **Change 1**: step penalty -0.01 → **-0.001**. Penalità max per episodio: 65,536 × 0.001 = 65.5 (era 655).
+- **Change 2**: obs dim 12 → **14**. Due nuove feature:
+  - `enemy_lead_level / 100.0` — RAM `0xD0FC` (DataCrystal verified). Valore stale per ~100-500 step dopo BATTLE START (RAM non ancora inizializzata), poi stabile per tutta la battaglia. Verificato empiricamente: Falkner Pidgey→7, Pidgeot→9. ✓
+  - `enemy_hp_ratio` — `(D0FF/D100) / (D101/D102)`. Scende man mano che si fa danno, torna a 1.0 quando esce il secondo Pokemon. Brevi drop a 0.0 durante animazioni/menu — normale. ✓
+- Rationale: l'agente ora può stimare se è in vantaggio o svantaggio in battaglia (confrontando lead_level vs enemy_lead_level e i rispettivi hp_ratio). Segnale diretto per imparare "cura prima di entrare in palestra" e "attacca finché l'avversario ha hp alto".
 
 ---
 
@@ -216,3 +240,27 @@ Quick reference for all training strategies attempted, results, and lessons lear
 - violet_city_gym.state nel curriculum (gym milestone non può sparare per quell'env — mappa già in visited_maps all'init — PPO_8 lesson)
 - Battle reward proporzionale a HP (catena causale troppo lunga, doppia lettura RAM nello stesso step sempre 0)
 - Battle win reward flat +15 (crea local optima: grinding near start.state > navigare verso waypoint distanti — PPO_10 lesson)
+
+---
+
+## Future Upgrades — Ispirate a PokemonRedExperiments
+
+Backlog ordinato per impatto stimato. Da provare in questo ordine se PPO_13+ non raggiunge il badge da start.state in modo consistente.
+
+### Già implementate
+- [x] Lead Pokemon level in obs (PPO_13) — 0xDA49
+- [x] Heal reward (PPO_13) — +30 quando hp_ratio aumenta >0.4 fuori battaglia
+- [x] MAX_STEPS 4× (PPO_13) — 2^16 = 65,536
+- [x] Step penalty ridotta (PPO_14) — -0.01 → -0.001
+- [x] Opponent level in obs (PPO_14) — 0xD0FC (DataCrystal verified, Falkner Pidgey=7 / Pidgeot=9 ✓)
+- [x] Enemy HP ratio in obs (PPO_14) — 0xD0FF/D100 current, 0xD101/D102 max
+
+### Livello successivo (se PPO_14 fallisce)
+| Upgrade | Descrizione | Impatto stimato | Costo |
+|---------|-------------|-----------------|-------|
+| **Party levels tutti e 6** | Leggere livello di tutti i party pokemon (offset +0x1F dai successivi wPartyMon, ogni struct = 48 bytes). Segnale più ricco per battle readiness. | Medio | Basso |
+| **Stuck penalty leggero** | -0.02 per ogni tile rivisitata nella sessione (non per episodio — usa visited_tiles set). Scoraggia cicli locali senza penalizzare l'esplorazione globale. Diverso da PPO_2 (che era -0.01/step puro). | Medio | Basso |
+| **Event flags in obs** | Aggiungere flag_rival e flag_elm come features binarie nell'obs (già letti dal RAM reader). L'agente può sapere se ha già consegnato l'uovo o battuto il rivale. | Medio | Bassissimo — già in RAM reader |
+| **N_STEPS aumentato** | 2048 → 8192. Rollout più lunghi = value function vede più di ogni episodio per rollout. Con MAX_STEPS=65536 e N_STEPS=2048, un episodio dura ~32 rollout — troppi bootstrap. | Medio | Medio (più RAM, training più lento per update) |
+| **Image-based observation** | Switch da MlpPolicy + vettore a CnnPolicy + screen (72×80 RGB) come PokemonRed. L'agente vede il gioco come un umano — navigazione e battle molto più intuitive. | Molto alto | Molto alto — richiede refactoring completo, 10× più compute |
+| **200M+ timesteps** | PokemonRed usa 5B steps. Noi usiamo 100M. Anche solo 200-300M potrebbe sbloccare comportamenti che non emergono a 100M. | Incerto | Alto (ore di training) |
