@@ -36,8 +36,19 @@ class RAMReader:
         #   DA4C/DA4D = party slot 0 HP  (always valid, persists between battles)
         #   CB1C/CB1D = active combat HP (only meaningful while battle_type > 0)
         lead_hp     = (self.pyboy.memory[0xDA4C] << 8) | self.pyboy.memory[0xDA4D]
-        lead_level  = self.pyboy.memory[0xDA49]  # Added: Lead Pokemon level for better state representation 
+        lead_level  = self.pyboy.memory[0xDA49]  # Lead Pokemon level (slot 1)
         lead_max_hp = (self.pyboy.memory[0xDA4E] << 8) | self.pyboy.memory[0xDA4F]
+
+        # ── Party Pokemon levels (all 6 slots)
+        # Structure: wPartyMon1 base = 0xDA2A, level offset = +0x1F (empirically verified: 0xDA2A+0x1F=0xDA49=5 for Totodile at start)
+        # Struct size = 0x30 bytes per slot (Gen 2 standard — VERIFY empirically with test_enemy_level.py)
+        # Slots i >= party_count are zeroed to avoid stale RAM values from previous game sessions
+        PARTY_LEVEL_BASE  = 0xDA49  # Slot 1 level — empirically verified ✓
+        PARTY_STRUCT_SIZE = 0x30    # 48 bytes per party slot — calculated, needs verification
+        party_levels = [
+            self.pyboy.memory[PARTY_LEVEL_BASE + i * PARTY_STRUCT_SIZE] if i < party_count else 0
+            for i in range(6)
+        ]
         battle_hp   = (self.pyboy.memory[0xCB1C] << 8) | self.pyboy.memory[0xCB1D]
         hp_ratio    = lead_hp / lead_max_hp if lead_max_hp > 0 else 0.0
 
@@ -50,6 +61,10 @@ class RAMReader:
         flag_rival_cherrygrove = self.pyboy.memory[0xD88E]
         # 0xD7BA bit 7 (0x80): set to 1 during Elm lab sequence (egg/police/pokeball)
         flag_elm_mr_pokemon    = self.pyboy.memory[0xD7BA]
+        # 0xD836: Violet City Gym trainer beaten flags (empirically verified via test_enemy_level.py)
+        # bit 4 (0x10): RISE after Trainer 1 beaten (flag #1020)
+        # bit 3 (0x08): RISE after Trainer 2 beaten (flag #1019)
+        flag_violet_gym        = self.pyboy.memory[0xD836]
 
         # ── Enemy Pokemon (valid only when battle_type > 0)
         # Source: DataCrystal — https://datacrystal.tcrf.net/wiki/Pokémon_Gold_and_Silver/RAM_map
@@ -79,7 +94,9 @@ class RAMReader:
             "hp_ratio": hp_ratio,
             "flag_rival_cherrygrove": flag_rival_cherrygrove,
             "flag_elm_mr_pokemon": flag_elm_mr_pokemon,
+            "flag_violet_gym": flag_violet_gym,
             "lead_level": lead_level,
+            "party_levels": party_levels,
             "enemy_lead_level": enemy_lead_level,
             "enemy_hp": enemy_hp,
             "enemy_max_hp": enemy_max_hp,

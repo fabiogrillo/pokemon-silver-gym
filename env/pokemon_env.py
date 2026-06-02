@@ -27,6 +27,7 @@ class PokemonEnv(gym.Env):
         self.prev_party_count = 1  # Start with 1 Pokemon in party
         self.prev_flag_rival  = 0
         self.prev_flag_elm    = 0
+        self.prev_flag_violet_gym = 0
         self.visited_tiles = set()   # Track visited tiles for exploration reward
         self.visited_maps  = set()   # Track visited (bank, map) pairs for map transition reward
         self.episode_maps = set()  # Track maps visited within the current episode for exploration reward
@@ -41,7 +42,7 @@ class PokemonEnv(gym.Env):
         self.observation_space = gym.spaces.Box(
             low = 0.0,
             high=1.0,
-            shape=(14,),
+            shape=(20,),
             dtype=np.float32
         )
 
@@ -71,20 +72,26 @@ class PokemonEnv(gym.Env):
 
         # Return the observation, reward, done, and info
         obs = np.array([
-            ram_state["map_bank"] / 255,  # Normalize to [0,1]
-            ram_state["map_number"] / 255,  # Normalize to [0,1]
-            ram_state["local_x"] / 255,  # Normalize to [0,1]
-            ram_state["local_y"] / 255,  # Normalize to [0,1]
-            ram_state["zephyr"],  # Win condition not normalized since it's binary
-            ram_state["battle_type"] / 3,  # 3 tpyes: wild, trainer, gym
-            ram_state["party_count"] / 6,  # Max 6 Pokemon in party
-            ram_state["hp_ratio"],
-            ram_state["flag_rival_cherrygrove"] / 255,  # Normalize to [0,1]
-            ram_state["flag_elm_mr_pokemon"] / 255,  # Normalize to [0,1]
-            ram_state["lead_level"] / 100.0,        # Normalize lead Pokemon level to [0,1]
-            ram_state["enemy_lead_level"] / 100.0,  # Normalize enemy lead Pokemon level to [0,1] (0xD0FC, 0 when not in battle)
-            ram_state["enemy_hp_ratio"],             # Enemy HP ratio (0xD0FF/D101, 0 when not in battle)
-            min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles
+            ram_state["map_bank"] / 255,   # [0]  map bank (group)
+            ram_state["map_number"] / 255, # [1]  map number within group
+            ram_state["local_x"] / 255,    # [2]  player X on current map
+            ram_state["local_y"] / 255,    # [3]  player Y on current map
+            ram_state["zephyr"],                                           # [4]  win condition (binary)
+            ram_state["battle_type"] / 3,                                  # [5]  0=overworld 1=wild 2=trainer 3=gym
+            ram_state["party_count"] / 6,                                  # [6]  number of Pokemon in party
+            ram_state["hp_ratio"],                                         # [7]  lead Pokemon HP ratio
+            float(not bool(ram_state["flag_rival_cherrygrove"] & 0x40)),  # [8]  1=rival beaten (0xD88E bit6 cleared)
+            float(bool(ram_state["flag_elm_mr_pokemon"] & 0x40)),         # [9]  1=egg received from Mr. Pokemon
+            float(bool(ram_state["flag_elm_mr_pokemon"] & 0x80)),         # [10] 1=egg delivered to Elm
+            ram_state["lead_level"] / 100.0,                              # [11] lead Pokemon level (0xDA49)
+            ram_state["enemy_lead_level"] / 100.0,                        # [12] enemy lead level (0xD0FC, 0 when not in battle)
+            ram_state["enemy_hp_ratio"],                                   # [13] enemy HP ratio (0xD0FF/D101)
+            min(len(self.visited_tiles) / 2**10, 1.0),                    # [14] unique tiles visited this episode
+            ram_state["party_levels"][1] / 100.0,                         # [15] party slot 2 level (0=empty)
+            ram_state["party_levels"][2] / 100.0,                         # [16] party slot 3 level
+            ram_state["party_levels"][3] / 100.0,                         # [17] party slot 4 level
+            ram_state["party_levels"][4] / 100.0,                         # [18] party slot 5 level
+            ram_state["party_levels"][5] / 100.0,                         # [19] party slot 6 level
         ], dtype=np.float32)
         observation = obs  # or screen, or a combination of both
         info = {
@@ -98,8 +105,9 @@ class PokemonEnv(gym.Env):
         }
 
         self.prev_party_count = ram_state["party_count"]
-        self.prev_flag_rival  = ram_state["flag_rival_cherrygrove"]
-        self.prev_flag_elm    = ram_state["flag_elm_mr_pokemon"]
+        self.prev_flag_rival      = ram_state["flag_rival_cherrygrove"]
+        self.prev_flag_elm        = ram_state["flag_elm_mr_pokemon"]
+        self.prev_flag_violet_gym = ram_state["flag_violet_gym"]
         self.prev_map_bank   = ram_state["map_bank"]
         self.prev_map_number = ram_state["map_number"]
         self.prev_battle_type = ram_state["battle_type"]
@@ -130,9 +138,10 @@ class PokemonEnv(gym.Env):
         ram_state = self.ram_reader.read_all()
 
         # Use actual RAM values as baseline so flags only trigger on change, not on non-zero
-        self.prev_party_count  = 1
-        self.prev_flag_rival   = ram_state["flag_rival_cherrygrove"]
-        self.prev_flag_elm     = ram_state["flag_elm_mr_pokemon"]
+        self.prev_party_count     = ram_state["party_count"]
+        self.prev_flag_rival      = ram_state["flag_rival_cherrygrove"]
+        self.prev_flag_elm        = ram_state["flag_elm_mr_pokemon"]
+        self.prev_flag_violet_gym = ram_state["flag_violet_gym"]
         self.prev_map_bank   = ram_state["map_bank"]
         self.prev_map_number = ram_state["map_number"]
         self.prev_battle_type = ram_state["battle_type"]
@@ -140,20 +149,26 @@ class PokemonEnv(gym.Env):
         self.visited_maps.add((ram_state["map_bank"], ram_state["map_number"]))
         
         obs = np.array([
-            ram_state["map_bank"] / 255,  # Normalize to [0,1]
-            ram_state["map_number"] / 255,  # Normalize to [0,1]
-            ram_state["local_x"] / 255,  # Normalize to [0,1]
-            ram_state["local_y"] / 255,  # Normalize to [0,1]
-            ram_state["zephyr"],  # Win condition not normalized since it's binary
-            ram_state["battle_type"] / 3,  # 3 tpyes: wild, trainer, gym
-            ram_state["party_count"] / 6,  # Max 6 Pokemon in party
-            ram_state["hp_ratio"],
-            ram_state["flag_rival_cherrygrove"] / 255,  # Normalize to [0,1]
-            ram_state["flag_elm_mr_pokemon"] / 255,  # Normalize to [0,1]
-            ram_state["lead_level"] / 100.0,        # Normalize lead Pokemon level to [0,1]
-            ram_state["enemy_lead_level"] / 100.0,  # Normalize enemy lead Pokemon level to [0,1] (0xD0FC, 0 when not in battle)
-            ram_state["enemy_hp_ratio"],             # Enemy HP ratio (0xD0FF/D101, 0 when not in battle)
-            min(len(self.visited_tiles) / 2**10, 1.0)  # Normalize visited tiles
+            ram_state["map_bank"] / 255,   # [0]  map bank (group)
+            ram_state["map_number"] / 255, # [1]  map number within group
+            ram_state["local_x"] / 255,    # [2]  player X on current map
+            ram_state["local_y"] / 255,    # [3]  player Y on current map
+            ram_state["zephyr"],                                           # [4]  win condition (binary)
+            ram_state["battle_type"] / 3,                                  # [5]  0=overworld 1=wild 2=trainer 3=gym
+            ram_state["party_count"] / 6,                                  # [6]  number of Pokemon in party
+            ram_state["hp_ratio"],                                         # [7]  lead Pokemon HP ratio
+            float(not bool(ram_state["flag_rival_cherrygrove"] & 0x40)),  # [8]  1=rival beaten (0xD88E bit6 cleared)
+            float(bool(ram_state["flag_elm_mr_pokemon"] & 0x40)),         # [9]  1=egg received from Mr. Pokemon
+            float(bool(ram_state["flag_elm_mr_pokemon"] & 0x80)),         # [10] 1=egg delivered to Elm
+            ram_state["lead_level"] / 100.0,                              # [11] lead Pokemon level (0xDA49)
+            ram_state["enemy_lead_level"] / 100.0,                        # [12] enemy lead level (0xD0FC, 0 when not in battle)
+            ram_state["enemy_hp_ratio"],                                   # [13] enemy HP ratio (0xD0FF/D101)
+            min(len(self.visited_tiles) / 2**10, 1.0),                    # [14] unique tiles visited this episode
+            ram_state["party_levels"][1] / 100.0,                         # [15] party slot 2 level (0=empty)
+            ram_state["party_levels"][2] / 100.0,                         # [16] party slot 3 level
+            ram_state["party_levels"][3] / 100.0,                         # [17] party slot 4 level
+            ram_state["party_levels"][4] / 100.0,                         # [18] party slot 5 level
+            ram_state["party_levels"][5] / 100.0,                         # [19] party slot 6 level
         ], dtype=np.float32)
 
         return obs, {}
@@ -197,9 +212,23 @@ class PokemonEnv(gym.Env):
         if (ram_state["flag_elm_mr_pokemon"] & ELM_BIT) and not (self.prev_flag_elm & ELM_BIT):
             events += 200.0
 
-        # Falling edge: exited battle while alive → trainer defeated or wild battle survived
-        # if self.prev_battle_type > 0 and ram_state["battle_type"] == 0 and ram_state["hp_ratio"] > 0:
-        #    events += 15.0
+        # 0xD836 bit 4 (0x10): rising edge — Violet City Gym Trainer 1 beaten (flag #1020, empirically verified)
+        TRAINER1_BIT = 0x10
+        if (ram_state["flag_violet_gym"] & TRAINER1_BIT) and not (self.prev_flag_violet_gym & TRAINER1_BIT):
+            events += 100.0
+
+        # 0xD836 bit 3 (0x08): rising edge — Violet City Gym Trainer 2 beaten (flag #1019, empirically verified)
+        TRAINER2_BIT = 0x08
+        if (ram_state["flag_violet_gym"] & TRAINER2_BIT) and not (self.prev_flag_violet_gym & TRAINER2_BIT):
+            events += 100.0
+
+        # Gym-specific battle win: won a battle while inside Violet City Gym (map 10,7)
+        # Unlike the general battle win reward (removed in PPO_10 — caused wild grinding near start),
+        # this reward is map-constrained: only fires inside the gym → no local optima near start.state.
+        # Fires at most 3×/episode: trainer1 + trainer2 + Falkner.
+        if self.prev_battle_type > 0 and ram_state["battle_type"] == 0 and ram_state["hp_ratio"] > 0:
+            if (ram_state["map_bank"], ram_state["map_number"]) == (10, 7):  # VIOLET_CITY_GYM
+                events += 150.0
                 
         # Small reward for catching a pokemon
         if self.prev_party_count < ram_state["party_count"]:
@@ -247,6 +276,16 @@ class PokemonEnv(gym.Env):
         # Exploration reward for visiting new tiles
         if new_tile:
             exploration += 1.0
+        
+        # Stuck penalty: discourage revisiting tiles already seen this episode
+        if not new_tile:
+            penalties -= 0.003
+
+        # Wild battle penalty (PPO_17): each step in a wild battle outside the gym costs -3.0
+        # Wild battles (battle_type=1) deplete HP and prevent progress to the gym.
+        # Map-constrained to NOT (10,7) so trainer/gym battles inside Violet City Gym are unaffected.
+        if ram_state["battle_type"] == 1 and (ram_state["map_bank"], ram_state["map_number"]) != (10, 7):
+            penalties -= 3.0
 
         # Penalty for losing (HP drops to 0 in overworld)
         if ram_state["hp_ratio"] <= 0 and ram_state["battle_type"] == 0:

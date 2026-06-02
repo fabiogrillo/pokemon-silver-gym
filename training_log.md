@@ -215,6 +215,60 @@ Quick reference for all training strategies attempted, results, and lessons lear
   - `enemy_lead_level / 100.0` — RAM `0xD0FC` (DataCrystal verified). Valore stale per ~100-500 step dopo BATTLE START (RAM non ancora inizializzata), poi stabile per tutta la battaglia. Verificato empiricamente: Falkner Pidgey→7, Pidgeot→9. ✓
   - `enemy_hp_ratio` — `(D0FF/D100) / (D101/D102)`. Scende man mano che si fa danno, torna a 1.0 quando esce il secondo Pokemon. Brevi drop a 0.0 durante animazioni/menu — normale. ✓
 - Rationale: l'agente ora può stimare se è in vantaggio o svantaggio in battaglia (confrontando lead_level vs enemy_lead_level e i rispettivi hp_ratio). Segnale diretto per imparare "cura prima di entrare in palestra" e "attacca finché l'avversario ha hp alto".
+- **Eval da start.state (10 episodi)**: badge=0/10, avg reward=+299.6±61.3, avg tiles=304.0±58.0, avg steps=16384 (tutti troncati — eval usa MAX_STEPS=2**14=16384, diverso dal training 2**16=65536).
+- **Training finale**: ep_rew_mean picco ~498 a 35M steps, poi exploitation collapse a ~386-395 a fine run. reward_events smoothed 0.0028 (identico a PPO_13 — nessun miglioramento). visited_tiles smoothed 243-282 (declino da 360 a metà training). ep_len_mean 34,500-36,000. entropy_loss stabile -2.01/-2.05. explained_variance 0.952-0.997.
+- **Lesson**: exploitation collapse: l'agente esplora meno nel tempo — converge a "gironzola vicino alla partenza e sopravvive". Le feature nemico (enemy_lead_level, enemy_hp_ratio) non hanno sbloccato la navigazione perché l'agente non raggiunge il gym abbastanza spesso da usarle. Causa radice identificata: violet_city_gym.state peso 0 → il modello non ha mai allenato il combattimento diretto con Falkner in nessuno dei 14 training run.
+
+---
+
+## PPO_15 — Damage reward + gym curriculum + N_STEPS 8192 (2026-05-29 → 2026-05-30, FERMATO a 58%)
+- **500M steps**, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4 (invariati), CHECKPOINT_FREQ=25M
+- **Curriculum**: 2×start + 1×mid_route30 + 1×route_31 + 2×before_elm_delivery + **1×violet_city** (era 2) + **1×violet_city_gym** (era 0, riattivato)
+  - Nota sul gym env: il one-shot +400 non spara (mappa già in visited_maps all'init — PPO_8 lesson). Il per-episode +200 spara se l'agente esce e rientra. Beneficio principale: training diretto sui battle con i trainer in palestra e con Falkner → damage reward fire dall'env gym.
+- **N_STEPS**: 4096 → **8192** (2**13). Con MAX_STEPS=65,536 e N_STEPS=8192, un episodio copre ~8 rollout (era ~16). PPO aggiorna i pesi vedendo più contesto per episodio → meno errori di bootstrap accumulati → migliore credit assignment verso reward lontani.
+- **New reward**: damage reward. Formula: `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0` solo quando `battle_type > 0` per t e t-1. Guard `if delta > 0` per evitare false penalty su switch nemico. ✓ formula corretta.
+- **Party levels in obs** (dim 15→20): 5 nuove feature agli indici 15-19 (slot 2-6 / 100.0). Struct size=0x30 verificato empiricamente (start.state → [5,0,0,0,0,0] ✓).
+- **Gym trainer flags** (empiricamente verificati via `test_enemy_level.py`):
+  - Trainer 1 beaten: `0xD836 bit=4` (mask 0x10, flag #1020) → +100 reward (RISE)
+  - Trainer 2 beaten: `0xD836 bit=3` (mask 0x08, flag #1019) → +100 reward (RISE)
+  - Falkner beaten: `0xD84E bit=5` (mask 0x20, flag #1213) — coperto dal badge reward, non reward separato
+- **Gym battle exit reward** +150: map-constrained a (10,7). Max 3×/episodio.
+- **Stuck penalty** -0.02/step su ogni tile rivisitata nell'episodio.
+- **Result**: FERMATO a 289M/500M step (58%). Progressione ep_rew_mean: +30 a 13% → −18 a 26% → stagnante a −170/−183 da ~130M step in poi. policy_gradient_loss sceso a −0.001 (quasi zero). explained_variance stabile 0.99+ (value overfit). visited_tiles cresciuti da 163 (26%) a 250 (58%) — l'agente esplorava di più, ma veniva penalizzato di più. Badge mai raggiunto.
+- **Root cause**: stuck_penalty miscalibrata. Conto per episodio medio (29k step, 260 tile nuove): new tiles +260, stuck −575, step −29, events +170 → totale −174. Il penalty da solo pesa 575 vs 260 di exploration reward (ratio 2.2:1 a sfavore). Breakeven: stuck_penalty < 260/28,740 ≈ 0.009/step. Con -0.02 non c'è mai un incentivo netto a esplorare nuovi territori.
+- **Lesson**: stuck_penalty deve essere abbastanza piccolo da lasciare reward netto positivo in un episodio di pura esplorazione. -0.02 è 7× sopra il breakeven. La conseguenza: il training converge su "vai presto e muori" (episodi corti) o "gira sul noto e accumula penalty". Il valore corretto è ~−0.003, che porta il baseline a +315/ep e mantiene la pressione verso nuove aree senza annullare il signal degli eventi.
+
+---
+
+## PPO_16 — Stuck penalty calibrata (2026-05-30 → 2026-06-02, COMPLETATO)
+- **500M steps**, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4, N_STEPS=8192 (invariati)
+- **Curriculum**: invariato da PPO_15
+- **Unica modifica**: `stuck_penalty -0.02 → -0.003` (7× ridotto)
+- **Training final**: ep_rew_mean **+523** (vs −180 di PPO_15 — calibrazione confermata efficace). visited_tiles smoothed 244-319. policy_gradient_loss −0.0001/−0.001 (policy quasi convergente). explained_variance 0.98+ (value function molto fitted). in_battle smoothed **0.124** (12.4% del tempo in combattimento — sintomo di local optima wild battle). hp_ratio 0.77-0.91. reward_events 0.0046-0.0147 (curriculum-driven).
+- **Eval da start.state (10 episodi)**: badge=**0/10**, avg reward=**+180.5±92.0**, avg steps=20,499±17,054, avg tiles=261±82.5. Episodi 4 e 6 raggiungono reward 317-349 ma nessun badge.
+- **Gap training/eval**: +523 (training) vs +180 (eval start.state). Le curriculum states `violet_city_gym.state` sparano eventi gratis che gonfiano ep_rew_mean ma la policy non transfer al percorso completo.
+- **Failure mode osservato** (gameplay manuale post-training): l'agente entra nell'erba, ingaggia wild Pokémon, perde la battaglia → HP=0 → episodio termina prima del gym. Il `damage_reward` (k=5.0) introdotto in PPO_15 ha creato un attrattore locale: combattere wild = reward immediato, navigare = reward distante.
+- **Root cause**: il reward locale del damage in wild battle (+5.0 × delta_hp per turno) compete con il reward distante del gym. PPO greedy → l'agente preferisce l'erba.
+- **Lesson**: il damage_reward non distingue tra battaglie utili (gym) e dannose (wild). Va rimosso, e le wild battles fuori dal gym vanno penalizzate esplicitamente per spezzare il local optima.
+
+---
+
+## PPO_17 — Wild battle penalty + damage_reward rimosso (pianificato, 2026-06-02)
+- **500M steps**, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4, N_STEPS=8192 (invariati). Stop-early plan a 200M se ep_rew_mean non sale.
+- **Curriculum**: invariato da PPO_16
+- **Modifica 1 — Wild battle penalty**: `−3.0/step` quando `battle_type == 1 AND map_bank,map_number != (10,7)`. Map-constrained per non penalizzare eventuali stati anomali dentro al gym.
+- **Modifica 2 — Damage reward RIMOSSO**: il blocco `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0` eliminato da compute_reward. Il `prev_enemy_hp_ratio` resta tracciato per future analisi ma non genera più reward.
+- **Calcolo impatto**: una wild battle media dura ~15-25 step. Costo PPO_17: 15 × −3.0 = **−45** per wild battle (era +0.75 netto in PPO_16 considerando damage_reward). Differenza: ~−46 per battaglia → fortissimo disincentivo.
+- **Baseline atteso per ep da start.state** (29k step, 260 tile, 0 battle wild): +260 (tiles) −86 (stuck) −29 (step) +170 (events) = **+315/ep** (puro come PPO_16 senza damage). Se l'agente fa anche 1 sola wild battle: 315 − 45 = +270. Se ne fa 5: 315 − 225 = +90. Forte gradiente verso evitare grass.
+- **Atteso**:
+  1. `in_battle` smoothed cala da 0.124 a <0.05 (target: <0.03)
+  2. `visited_tiles` smoothed sale (l'agente naviga invece di combattere)
+  3. ep_rew_mean stabile o sale leggermente (no boost gratuito da damage_reward + no penalty se ha imparato a evitare)
+  4. Eval start.state: avg reward > +200, **almeno 1 badge su 10** (criterio di successo)
+- **Checkpoint mentale**:
+  - 50M (~3h): `in_battle` deve essere <0.10 → segno che il penalty ha effetto
+  - 200M (~12h): ep_rew_mean stabile positivo → continua. Sennò: stop, problema architetturale (MlpPolicy + state vector non basta)
+- **Se PPO_17 fallisce → CnnPolicy**: validato che 16 run di MLP con tutte le combinazioni di reward shaping non risolvono il problema → cambio di rappresentazione necessario.
 
 ---
 
@@ -237,9 +291,11 @@ Quick reference for all training strategies attempted, results, and lessons lear
 - Map Card event reward (not in standard flag range, Cherrygrove +20 suffices)
 - sprout_tower_2f in curriculum (isola narrativa, non contribuisce al path verso Violet City)
 - 3×before_elm_delivery senza VecNormalize (troppa varianza di return, causa regressione — PPO_6 lesson)
-- violet_city_gym.state nel curriculum (gym milestone non può sparare per quell'env — mappa già in visited_maps all'init — PPO_8 lesson)
+- violet_city_gym.state nel curriculum SOLO per il milestone one-shot +400 (mappa già in visited_maps all'init — PPO_8 lesson). Riadottato in PPO_15 con peso 1 per battle training diretto — il one-shot non spara, ma damage reward e badge reward sì.
 - Battle reward proporzionale a HP (catena causale troppo lunga, doppia lettura RAM nello stesso step sempre 0)
 - Battle win reward flat +15 (crea local optima: grinding near start.state > navigare verso waypoint distanti — PPO_10 lesson)
+- **Stuck penalty -0.02** (PPO_15 lesson) — penalty troppo aggressivo: 28,740 step × 0.02 = −575/ep vs +260 new tile reward. Ratio 2.2:1 contro l'esplorazione. Il training si blocca a −180 di ep_rew_mean da 130M step in poi. Usare −0.003 (breakeven < 0.009).
+- **Damage reward in wild battles** (PPO_16 lesson) — `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0` indistinto tra wild/trainer/gym crea local optima: l'agente combatte wild Pokémon (reward immediato +5×delta per turno) invece di navigare verso il gym (reward distante). Risultato: `in_battle` smoothed = 0.124, badge=0/10 in eval. Rimosso in PPO_17. Se mai re-introdotto, deve essere map-constrained al gym (10,7).
 
 ---
 
@@ -254,13 +310,18 @@ Backlog ordinato per impatto stimato. Da provare in questo ordine se PPO_13+ non
 - [x] Step penalty ridotta (PPO_14) — -0.01 → -0.001
 - [x] Opponent level in obs (PPO_14) — 0xD0FC (DataCrystal verified, Falkner Pidgey=7 / Pidgeot=9 ✓)
 - [x] Enemy HP ratio in obs (PPO_14) — 0xD0FF/D100 current, 0xD101/D102 max
+- [x] N_STEPS 8192 (PPO_15) — 4096 → 8192. Un episodio da 65k step copre ~8 rollout invece di ~16 → meno errori di bootstrap accumulati per episodio.
+- [x] Damage reward (PPO_15) — `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0`. ✓ formula corretta.
+- [x] violet_city_gym.state nel curriculum (PPO_15, peso 0→1) — per training diretto su Falkner. One-shot +400 non spara (mappa già in visited_maps), per-episode +200 spara su re-entry.
+- [x] Stuck penalty (PPO_15 → PPO_16) — introdotto a -0.02 in PPO_15, calibrato a **-0.003** in PPO_16. Con -0.02 il penalty (575/ep) dominava l'exploration reward (260/ep) → training stagnante a −180. Breakeven: penalty < 0.009/step. -0.003 porta il baseline a +315/ep (positivo). Diverso da PPO_2 (quello era -0.01/step flat sempre, senza distinzione new/old tile).
+- [x] Event flags binari in obs (PPO_15) — 3 feature binarie agli indici 8-10: rival beaten, egg received, egg delivered. Obs dim 13→15 (sostituisce i 2 byte normalizzati).
+- [x] Party levels tutti e 6 (PPO_15, dim 15→20) — indici 15-19: slot 2-6. Struct size=0x30 calcolato, addresses: 0xDA79/0xDAA9/0xDAD9/0xDB09/0xDB39. Verificare con test_enemy_level.py.
+- [x] Gym battle exit reward +150 (PPO_15) — map-constrained (10,7). Fires su battle falling edge dentro gym. Max 3×/ep. Safe vs grinding (lesson PPO_10).
+- [x] Wild battle penalty (PPO_17) — `−3.0/step` quando `battle_type == 1` e mappa ≠ (10,7). Spezza il local optima introdotto da damage_reward in PPO_16.
+- [x] Damage reward rimosso (PPO_17) — eliminato `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0`. Era responsabile dell'attrattore wild battle.
 
-### Livello successivo (se PPO_14 fallisce)
-| Upgrade | Descrizione | Impatto stimato | Costo |
-|---------|-------------|-----------------|-------|
-| **Party levels tutti e 6** | Leggere livello di tutti i party pokemon (offset +0x1F dai successivi wPartyMon, ogni struct = 48 bytes). Segnale più ricco per battle readiness. | Medio | Basso |
-| **Stuck penalty leggero** | -0.02 per ogni tile rivisitata nella sessione (non per episodio — usa visited_tiles set). Scoraggia cicli locali senza penalizzare l'esplorazione globale. Diverso da PPO_2 (che era -0.01/step puro). | Medio | Basso |
-| **Event flags in obs** | Aggiungere flag_rival e flag_elm come features binarie nell'obs (già letti dal RAM reader). L'agente può sapere se ha già consegnato l'uovo o battuto il rivale. | Medio | Bassissimo — già in RAM reader |
-| **N_STEPS aumentato** | 2048 → 8192. Rollout più lunghi = value function vede più di ogni episodio per rollout. Con MAX_STEPS=65536 e N_STEPS=2048, un episodio dura ~32 rollout — troppi bootstrap. | Medio | Medio (più RAM, training più lento per update) |
-| **Image-based observation** | Switch da MlpPolicy + vettore a CnnPolicy + screen (72×80 RGB) come PokemonRed. L'agente vede il gioco come un umano — navigazione e battle molto più intuitive. | Molto alto | Molto alto — richiede refactoring completo, 10× più compute |
-| **200M+ timesteps** | PokemonRed usa 5B steps. Noi usiamo 100M. Anche solo 200-300M potrebbe sbloccare comportamenti che non emergono a 100M. | Incerto | Alto (ore di training) |
+### Livello successivo (se PPO_15 fallisce)
+| Upgrade | Stato | Descrizione | Impatto stimato | Costo |
+|---------|-------|-------------|-----------------|-------|
+| **DataCrystal event tracking completo** | 🔲 da fare | Reward per ogni event flag da New Bark Town a Falkner. Gym trainer 1/2 flags da scoprire con `test_enemy_level.py start`. Nota: running shoes non esiste in Gen 2, Pokédex/Pokéball già coperti da ELM_BIT. | Alto | Medio (ricerca + verifica empirica) |
+| **Image-based observation** | 🔲 ultimo resort | Switch da MlpPolicy + vettore a CnnPolicy + screen (72×80 RGB) come PokemonRed. L'agente vede il gioco come un umano. | Molto alto | Molto alto — refactoring completo, 10× più compute |
