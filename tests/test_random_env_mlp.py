@@ -1,9 +1,9 @@
-from env.pokemon_env import PokemonEnv
+from env.pokemon_env_mlp import PokemonEnvMLP
 
 ROM_PATH = "pokemon_rom.gbc"
 STATE_PATH = "saves/violet_city_gym.state"
 
-env = PokemonEnv(ROM_PATH, STATE_PATH, headless=False)
+env = PokemonEnvMLP(ROM_PATH, STATE_PATH, headless=False)
 obs, info = env.reset()
 print(f"Reset OK - obs shape: {obs.shape}")
 

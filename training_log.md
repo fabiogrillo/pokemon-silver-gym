@@ -253,22 +253,63 @@ Quick reference for all training strategies attempted, results, and lessons lear
 
 ---
 
-## PPO_17 — Wild battle penalty + damage_reward rimosso (pianificato, 2026-06-02)
-- **500M steps**, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4, N_STEPS=8192 (invariati). Stop-early plan a 200M se ep_rew_mean non sale.
+## PPO_17 — Wild battle penalty -3.0 (2026-06-02, FERMATO a 22% / 44.6M step)
+- **200M steps**, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4, N_STEPS=8192
 - **Curriculum**: invariato da PPO_16
-- **Modifica 1 — Wild battle penalty**: `−3.0/step` quando `battle_type == 1 AND map_bank,map_number != (10,7)`. Map-constrained per non penalizzare eventuali stati anomali dentro al gym.
-- **Modifica 2 — Damage reward RIMOSSO**: il blocco `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0` eliminato da compute_reward. Il `prev_enemy_hp_ratio` resta tracciato per future analisi ma non genera più reward.
-- **Calcolo impatto**: una wild battle media dura ~15-25 step. Costo PPO_17: 15 × −3.0 = **−45** per wild battle (era +0.75 netto in PPO_16 considerando damage_reward). Differenza: ~−46 per battaglia → fortissimo disincentivo.
-- **Baseline atteso per ep da start.state** (29k step, 260 tile, 0 battle wild): +260 (tiles) −86 (stuck) −29 (step) +170 (events) = **+315/ep** (puro come PPO_16 senza damage). Se l'agente fa anche 1 sola wild battle: 315 − 45 = +270. Se ne fa 5: 315 − 225 = +90. Forte gradiente verso evitare grass.
-- **Atteso**:
-  1. `in_battle` smoothed cala da 0.124 a <0.05 (target: <0.03)
-  2. `visited_tiles` smoothed sale (l'agente naviga invece di combattere)
-  3. ep_rew_mean stabile o sale leggermente (no boost gratuito da damage_reward + no penalty se ha imparato a evitare)
-  4. Eval start.state: avg reward > +200, **almeno 1 badge su 10** (criterio di successo)
-- **Checkpoint mentale**:
-  - 50M (~3h): `in_battle` deve essere <0.10 → segno che il penalty ha effetto
-  - 200M (~12h): ep_rew_mean stabile positivo → continua. Sennò: stop, problema architetturale (MlpPolicy + state vector non basta)
-- **Se PPO_17 fallisce → CnnPolicy**: validato che 16 run di MLP con tutte le combinazioni di reward shaping non risolvono il problema → cambio di rappresentazione necessario.
+- **Modifica 1**: Wild battle penalty `−3.0/step` quando `battle_type == 1 AND (map_bank, map_number) != (10,7)`
+- **Modifica 2**: Damage reward RIMOSSO completamente
+- **Result a 44.6M step (22%)**: FERMATO per stallo oscillante. ep_rew_mean oscilla nel range **[-5000, -2000]** senza trend monotonico (best -1973 a 27M, regressione a -3705 a 44M). `in_battle` oscilla 0.003↔0.083, `visited_tiles` 94↔288, `reward_events` quasi sempre 0.
+- **Root cause (calcolo)**: il penalty −3.0/step è strutturalmente troppo aggressivo. Una wild battle media (~80 step pyboy) = −240. Per attraversare Route 30+31 sono fisiologiche 5-10 wild battle inevitabili → costo −1200/−2400 vs +455 totali di waypoint reward dal start a Violet Gym. L'agente fa la matematica corretta: muoversi costa più di stare fermo → equilibrio di stallo.
+- **Signal pattern identificato**: "stallo oscillante" ≠ "stagnazione" ≠ "collapse". entropy_loss -2.04 sano, value_loss basso, MA reward oscilla senza convergere. Firma diagnostica: penalty calibrato male rispetto al reward landscape.
+- **Lesson**: il wild penalty deve essere abbastanza forte da disincentivare grinding ma abbastanza piccolo da non sopprimere la navigazione. -3.0 è 3× sopra il break-even. Calibrato a -1.0 in PPO_18.
+
+---
+
+## PPO_18 — Wild battle penalty calibrata a -1.0 (2026-06-03, FERMATO a 51% / 103M step)
+- **200M steps**, 8 envs, ent_coef=0.08, gamma=0.999, lr=3e-4, N_STEPS=8192 (invariati da PPO_17)
+- **Curriculum**: invariato (2×start + 1×mid_route30 + 1×route_31 + 2×before_elm_delivery + 1×violet_city + 1×violet_city_gym)
+- **Unica modifica vs PPO_17**: `wild_battle_penalty −3.0 → −1.0` (3× ridotto)
+- **Result a 103M step (51%)** — dati last-100 rollouts:
+  - `ep_rew_mean` mean=**−1160**, std=166 (range stabile [-1326, -994])
+  - `in_battle` mean=**0.0495** (2.5× meglio di PPO_16 a 0.124) ← fix wild penalty funziona
+  - `visited_tiles` mean=**214** ± 43 (esplorazione limitata ma stabile)
+  - `reward_events` mean=**0.0055** ± 0.009 (sparsi waypoint, non consistenti)
+  - `hp_ratio` mean=**0.90** ± 0.06 (sopravvivenza ottima)
+  - Best ep_rew_mean: -587 a 49M (mai più raggiunto)
+- **Confronto PPO_17 vs PPO_18 a parità di step**:
+  - 27M: PPO_17 -1973, PPO_18 -1348 (+32%)
+  - 44M: PPO_17 -4184, PPO_18 -1501 (+64%)
+  - 50M: PPO_17 -3500, PPO_18 -956 (+73%)
+  - Math della calibrazione era corretta, ma non sufficiente.
+- **Root cause: "stable suboptimal convergence"**. La policy ha convergato a un equilibrio negativo. Diagnostica:
+  - `explained_variance` 0.99+ → value function ha overfittato ai return correnti
+  - `policy_gradient_loss` -0.001 → gradiente di policy quasi morto
+  - `entropy_loss` -2.04 stabile → la policy non sta più esplorando attivamente
+  - `ep_rew_mean` std/mean = 14% → bassa varianza, comportamento ripetitivo
+  - Pattern definitivo: non è oscillazione (PPO_17), non è collapse (PPO_2), non è grinding (PPO_9). È **convergence to local optimum**.
+- **Lesson finale del filone MLP**: dopo 18 run con tutte le combinazioni di reward shaping (curriculum, milestones, calibration), observation features (lead_level, enemy_obs, party_levels, flag bits), e hyperparameter tuning (gamma, ent_coef, n_steps), il badge da start.state non è mai stato ottenuto in evaluation. Il limite **non è di reward engineering**: lo state vector `(map_id, x, y, hp, levels, ...)` non porta informazione spaziale sufficiente perché PPO costruisca un piano di navigazione di 800+ step verso il gym. CnnPolicy vede il sentiero, l'erba, gli NPC e la porta del gym — informazione che il vettore non contiene.
+- **Decisione 2026-06-03**: chiusa la fase MlpPolicy. Switch a **CnnPolicy + frame stacking** (PPO_19+, vedere sezione dedicata).
+
+---
+
+## Filone CnnPolicy — Inizia da PPO_19 (2026-06-03)
+
+Dopo 18 run di MlpPolicy con badge=0/10 da start.state in ogni eval, il problema è **rappresentazionale**, non di reward shaping. Riferimento: PokemonRedExperiments (Peter Whidden) che ha risolto Pokemon Red con CnnPolicy + frame stack.
+
+### Cambiamenti strutturali rispetto al filone MLP
+- **Env nuovo**: `env/pokemon_env_cnn.py` (obs = screen ndarray invece di state vector)
+- **Trainer nuovo**: `agents/rl/train_cnn.py`
+- **Policy**: `"CnnPolicy"` (NatureCNN: 3 conv layers + 2 fc layers)
+- **Observation space**: `Box(0, 255, shape=(72, 80, 3), uint8)` — screen downsampled 50%
+- **Frame stacking**: `VecFrameStack(n_stack=4)` per dare informazione di movimento
+- **Compute reward**: identico al filone MLP (riutilizzo da `env/pokemon_env.py`)
+- **Ram reader**: invariato — la verità ground truth per i reward viene sempre dalla RAM
+- **n_envs**: ridotto da 8 a 4 (CNN forward è più costoso)
+- **n_steps**: ridotto da 8192 a 2048
+- **learning_rate**: 2.5e-4 (vs 3e-4) — leggermente più conservativo
+- **batch_size**: 256 (vs 64) — sfrutta la GPU
+- **device**: `"cuda"` (per la prima volta — MLP era CPU-bound)
+- **TOTAL_TIMESTEPS**: 50M per prima validazione (vs 200M MLP — un episodio CNN costa ~10×)
 
 ---
 
@@ -296,6 +337,8 @@ Quick reference for all training strategies attempted, results, and lessons lear
 - Battle win reward flat +15 (crea local optima: grinding near start.state > navigare verso waypoint distanti — PPO_10 lesson)
 - **Stuck penalty -0.02** (PPO_15 lesson) — penalty troppo aggressivo: 28,740 step × 0.02 = −575/ep vs +260 new tile reward. Ratio 2.2:1 contro l'esplorazione. Il training si blocca a −180 di ep_rew_mean da 130M step in poi. Usare −0.003 (breakeven < 0.009).
 - **Damage reward in wild battles** (PPO_16 lesson) — `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0` indistinto tra wild/trainer/gym crea local optima: l'agente combatte wild Pokémon (reward immediato +5×delta per turno) invece di navigare verso il gym (reward distante). Risultato: `in_battle` smoothed = 0.124, badge=0/10 in eval. Rimosso in PPO_17. Se mai re-introdotto, deve essere map-constrained al gym (10,7).
+- **Wild battle penalty -3.0/step** (PPO_17 lesson, fermato a 22%) — overshoot opposto del damage_reward: penalty troppo aggressivo crea stallo oscillante. 1 wild battle media (80 step) = −240; per attraversare Route 30+31 con 5-10 wild battle inevitabili: −1,200/−2,400 vs +455 waypoint reward → netto negativo per muoversi → agente preferisce stare fermo. Calibrato a -1.0 in PPO_18.
+- **MlpPolicy + state vector** (filone PPO_1→PPO_18 chiuso 2026-06-03) — 18 run con tutte le combinazioni di reward shaping, curriculum, observation features. Mai badge da start.state in eval. Convergenza a "stable suboptimal" in PPO_18 con `explained_variance` 0.99+ e `policy_gradient_loss` ~0. Lo state vector non porta informazione spaziale sufficiente per piani di navigazione lunghi. Filone abbandonato a favore di CnnPolicy.
 
 ---
 
@@ -317,7 +360,7 @@ Backlog ordinato per impatto stimato. Da provare in questo ordine se PPO_13+ non
 - [x] Event flags binari in obs (PPO_15) — 3 feature binarie agli indici 8-10: rival beaten, egg received, egg delivered. Obs dim 13→15 (sostituisce i 2 byte normalizzati).
 - [x] Party levels tutti e 6 (PPO_15, dim 15→20) — indici 15-19: slot 2-6. Struct size=0x30 calcolato, addresses: 0xDA79/0xDAA9/0xDAD9/0xDB09/0xDB39. Verificare con test_enemy_level.py.
 - [x] Gym battle exit reward +150 (PPO_15) — map-constrained (10,7). Fires su battle falling edge dentro gym. Max 3×/ep. Safe vs grinding (lesson PPO_10).
-- [x] Wild battle penalty (PPO_17) — `−3.0/step` quando `battle_type == 1` e mappa ≠ (10,7). Spezza il local optima introdotto da damage_reward in PPO_16.
+- [x] Wild battle penalty (PPO_17 → PPO_18) — introdotto a `−3.0/step` in PPO_17, troppo aggressivo (stallo oscillante a 22%). Calibrato a `−1.0/step` in PPO_18. Map-constrained: NOT (10,7). Math: 1 wild battle ≈ 80 step → costo −80 (era −240) → gradiente verso il gym diventa marginalmente positivo (+455 waypoint − 600 wild penalty ≈ −145 netto, vs −1,345 di PPO_17).
 - [x] Damage reward rimosso (PPO_17) — eliminato `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0`. Era responsabile dell'attrattore wild battle.
 
 ### Livello successivo (se PPO_15 fallisce)

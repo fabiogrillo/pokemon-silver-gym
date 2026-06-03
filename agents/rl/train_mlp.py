@@ -1,6 +1,7 @@
+import os
 import numpy as np
 from agents.rl import config
-from env.pokemon_env import PokemonEnv
+from env.pokemon_env_mlp import PokemonEnvMLP
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor, VecNormalize
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
@@ -31,7 +32,7 @@ class InfoLoggerCallback(BaseCallback):
 
 def make_env(rank, state_path):
     def _init():
-        env = PokemonEnv(config.ROM_PATH, state_path, headless=True)
+        env = PokemonEnvMLP(config.ROM_PATH, state_path, headless=True)
         env.reset(seed=rank)
         return env
     return _init
@@ -63,11 +64,22 @@ if __name__ == "__main__":
                 tensorboard_log=config.LOG_DIR,
                 device="cpu")
 
+    # Per-run checkpoint subdir: runs/checkpoints/{RUN_NAME}/{RUN_NAME}_<step>_steps.zip
+    checkpoint_dir = os.path.join(config.MODEL_DIR, config.RUN_NAME)
     callbacks = [
-        CheckpointCallback(save_freq=config.CHECKPOINT_FREQ, save_path=config.MODEL_DIR, name_prefix="ppo_pokemon"),
+        CheckpointCallback(
+            save_freq=config.CHECKPOINT_FREQ,
+            save_path=checkpoint_dir,
+            name_prefix=config.RUN_NAME,
+        ),
         InfoLoggerCallback(),
     ]
-    model.learn(total_timesteps=config.TOTAL_TIMESTEPS, callback=callbacks, progress_bar=True)
+    model.learn(
+        total_timesteps=config.TOTAL_TIMESTEPS,
+        callback=callbacks,
+        progress_bar=True,
+        tb_log_name=config.RUN_NAME,
+    )
 
-    model.save(f"{config.MODEL_DIR}/ppo_pokemon_final")
-    print("Training completed and model saved.")
+    model.save(os.path.join(checkpoint_dir, f"{config.RUN_NAME}_final"))
+    print(f"Training completed and model saved as {config.RUN_NAME}_final.zip in {checkpoint_dir}")

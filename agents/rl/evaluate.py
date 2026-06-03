@@ -1,12 +1,12 @@
 import argparse
 import numpy as np
 from stable_baselines3 import PPO
-from env.pokemon_env import PokemonEnv
+from env.pokemon_env_mlp import PokemonEnvMLP
 from agents.rl import config
 
 
 def evaluate(model_path: str, n_episodes: int, render: bool):
-    env = PokemonEnv(config.ROM_PATH, config.STATE_PATH, headless=not render)
+    env = PokemonEnvMLP(config.ROM_PATH, config.STATE_PATH, headless=not render)
     model = PPO.load(model_path, env=env, device="cpu")
 
     results = []
