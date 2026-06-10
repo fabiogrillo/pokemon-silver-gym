@@ -292,6 +292,200 @@ Quick reference for all training strategies attempted, results, and lessons lear
 
 ---
 
+## PPO_CNN_1 — Primo run CNN, stable suboptimal (2026-06-03, FERMATO a 4M / 8%)
+- **50M steps**, 4 envs, gamma=0.999, gae_lambda=0.95
+- **Curriculum**: 4×start.state (puro, no curriculum diversity)
+- **Hyperparameters**: lr=2.5e-4, n_steps=2048, batch=256, n_epochs=4, ent_coef=0.01
+- **Frame stack**: 4, obs (72,80,3) uint8 → (12,72,80) dopo transpose
+- **Result a 4M (8%)**: FERMATO per stable suboptimal. ep_rew_mean=-502.6 ± 5.7 (last-100). Convergenza precoce a -500.
+  - `explained_variance` -1.15 oscillante (era 0.88 inizio)
+  - `clip_fraction` 0.36 (sopra clip_range 0.2)
+  - `approx_kl` 0.08 (5× soglia raccomandata)
+  - `reward_events` mai > 0 (mai raggiunto waypoint)
+- **Lesson**: senza curriculum diversity, anche la CNN converge a "stay at New Bark Town" — il problema NON era solo la rappresentazione, era anche l'assenza di segnale di reward "vicino". Confermato che curriculum è essenziale per credit assignment a lungo orizzonte.
+
+---
+
+## PPO_CNN_2 — Curriculum diverso + 8 envs + clip stretto (2026-06-03 → 2026-06-04, CRASH a 95% ma SUCCESS) ⚡
+
+**Primo run in 20 (PPO_1..18 MLP + PPO_CNN_1) a raggiungere ep_rew_mean POSITIVO da start.state curriculum.**
+
+- **50M steps**, **8 envs**, gamma=0.999, gae_lambda=0.95
+- **Curriculum** (vs PPO_CNN_1):
+  - 3× start.state (main target, 37.5%)
+  - 1× mid_route30 + 1× route_31 + 1× before_elm_delivery + 1× violet_city + 1× violet_city_gym
+- **Hyperparameter fix vs PPO_CNN_1**:
+  - `LEARNING_RATE_CNN` 2.5e-4 → **1.5e-4** (più conservativo)
+  - `BATCH_SIZE_CNN` 256 → **512** (sfrutta GPU)
+  - `clip_range` 0.2 → **0.1** (update meno aggressivi)
+- **Result a 47.4M (95%, CRASH per bug GIF path)**:
+  - `ep_rew_mean` BEST: **+112.68** at step 41.5M
+  - `ep_rew_mean` Last-100: **+53.6 ± 18.9** (PRIMO POSITIVO STABILE in 20 run)
+  - `visited_tiles` Last-100: 296 ± 47 (vs PPO_18 a 214) — esplora 40% più ampio
+  - `in_battle` Last-100: 0.045 (vs PPO_18 a 0.05) — evita wild battle
+  - `reward_events` Last-100: 0.002 (raramente ma occasionalmente raggiunge waypoint)
+  - `explained_variance` Last-100: 0.57 ± 0.22 (riprese stabilità verso fine)
+  - `entropy_loss` Last-100: -1.53 ± 0.03 (policy specializzata ma non collassata)
+  - `fps` 2,500-2,600 (8 envs × CnnPolicy + RTX 5080)
+  - Tempo totale: ~5h per 47M step
+- **Trend ep_rew_mean (storia completa)**:
+  ```
+  start: -3,595 → 4M: -676 → 11M: -129 → 15M: +10 (primo positivo) →
+  18M: +26 (picco intermedio) → 22M: +23 → 27M: -166 (regressione) →
+  34M: -94 → 39M: +20 → 43M: +68 → 47M: +36 → Last-100: +53.6
+  ```
+- **Crash analysis**: `FileNotFoundError: '/home/fabio/Projects/runs/gifs'` al primo save GIF (env 0 al 100° episodio, ~47.4M step). Bug del default `gif_dir="../runs/gifs/"` (relativo doppio-punto). Fix: default → `None`.
+- **Checkpoint salvati**: `runs/checkpoints/PPO_CNN_2/PPO_CNN_2_20000000_steps.zip` (al picco intermedio +26) e `PPO_CNN_2_40000000_steps.zip` (vicino al picco massimo +68).
+- **Lesson**:
+  1. Il **curriculum** + **clip range stretto** + **batch più grande** = combo vincente. Il PPO ha imparato per la prima volta a navigare in modo significativo.
+  2. `clip_fraction` resta alto (0.34) anche con clip_range=0.1, ma il training rimane stabile — sintomo che la policy continua a evolversi attivamente, non collasso.
+  3. `reward_events` sempre basso (0.002) MA `ep_rew_mean` positivo significa che il guadagno viene da **exploration tiles** + **eventi rari** + risparmio penalty. La policy NON ha ancora "scoperto" Violet City Gym da start.state.
+- **Next step**: evaluation da `start.state` su 10 episodi del checkpoint 40M. Se badge > 0 → success. Se badge = 0 → PPO_CNN_3 con focus su credit assignment del segmento finale (start → gym).
+
+---
+
+## PPO_CNN_3 — Damage reward al gym + heal reward (2026-06-04, COMPLETATO)
+
+**Eval da start.state: badge=0/10. L'agente impara a esplorare ma non combatte mai (in_battle=0%).**
+
+- **50M steps**, 8 envs, lr=1.5e-4, n_steps=2048, batch=512, n_epochs=4, ent_coef=0.03, clip_range=0.1
+- **Curriculum**: invariato da PPO_CNN_2 (3×start + 1×mid_route30 + 1×route_31 + 1×before_elm_delivery + 1×violet_city + 1×violet_city_gym)
+- **Modifica vs PPO_CNN_2**: damage reward RE-INTRODOTTO ma **map-constrained al gym** (10,7): `(prev_enemy_hp_ratio - enemy_hp_ratio) * 10.0` solo se `battle_type > 0` per t e t-1 E mappa == (10,7). Evita il local optima wild di PPO_16 (lì il damage era globale).
+- **Result training**: ep_rew_mean picco ~+250 a ~32M step, poi declino lento a fine run. visited_tiles smoothed ~466 (esplorazione molto ampia — record CNN). `in_battle` smoothed ~0.0 → l'agente evita sistematicamente ogni combattimento.
+- **Eval da start.state (10 episodi, 3 checkpoint)**: badge=**0/10** su tutti. avg reward ~+175/+188, **in_battle = 0% in OGNI episodio**.
+- **Gameplay osservato (--watch)**: l'agente NON si muove da New Bark Town. Esplora le case, rientra in casa propria, sale/scende i piani, ma **non entra mai nell'erba** (obbligatoria per raggiungere Cherrygrove). Non è un bug di in_battle=0: è una policy che massimizza i tile reward dentro New Bark senza mai partire.
+- **Root cause**: il reward landscape penalizza l'uscita. New Bark Town + interni offrono ~+250 di tile reward "gratis" e sicuri; uscire verso Route 29 → wild battle penalty (-0.05/step) + nessun tile nuovo immediato che batta i +250 già accumulati. Il damage reward al gym è irraggiungibile da start.state: l'agente non arriva mai al gym, quindi quel segnale non propaga.
+- **Lesson**: il damage reward map-constrained al gym è inerte da start.state (credit assignment troppo lungo). Il vero problema è che la navigazione iniziale (uscire da New Bark) non è mai incentivata abbastanza forte da superare l'attrattore locale dell'esplorazione interna. Serve un **mega-bonus per waypoint** che renda raggiungere Cherrygrove/Route 31/Violet enormemente più redditizio del gironzolare. → PPO_CNN_4.
+
+---
+
+## PPO_CNN_4 — Mega-bonus waypoint per-episodio (2026-06-04 → 2026-06-05, COMPLETATO 100M)
+
+**Eval da start.state: badge=0/10. L'agente ORA combatte (in_battle 3.2%) ma il comportamento è "schizofrenico" tra due policy in conflitto — peggiore in eval dei CNN precedenti.**
+
+- **100M steps** (override manuale, config dice 100M), 8 envs, hyperparameters invariati da PPO_CNN_3
+- **Curriculum**: invariato
+- **Modifica vs PPO_CNN_3**: per-episode waypoints potenziati **~80×** per spezzare l'attrattore "resta a New Bark":
+  - Cherrygrove (26,3): +25 → **+500**
+  - Route 31 (26,1): +50 → **+300**
+  - Violet City West (26,2): +80 → **+400**
+  - Violet City Main (10,5): +100 → **+500**
+  - Gym (10,7): +200 (invariato)
+- Wild penalty ridotto progressivamente in questo filone a **-0.05/step** (da -1.0 MLP) per non sopprimere la navigazione.
+- **Result training**: ep_rew_mean picco assoluto +994 a 507k (curriculum), peak reale stabile **+739 a ~55M**, poi **declino a +509 a 72M** (-230 vs peak). Last-100 a fine run ~+626 ± 41. `hp_ratio` Last-100 ~0.91, `in_battle` Last-100 ~0.058 (finalmente non-zero — l'agente combatte), `reward_events` ~0.008, `explained_variance` 0.25 ± 0.64 (INSTABILE, vs 0.99 dei run convergenti).
+- **Eval da start.state**:
+  - checkpoint 40M: avg reward **+81 ± 86**, in_battle 3.1%, badge **0/10**, avg tiles 406
+  - checkpoint 60M: avg reward **+89.6 ± 53**, in_battle 3.2%, badge **0/10**, avg tiles 445
+  - Range per episodio: +1.3 → +180.2. Nessun episodio raggiunge il gym.
+- **Confronto con CNN_2/CNN_3**: CNN_4 in eval è **PEGGIORE** (+89 vs +188/+196) nonostante il training salga a +626. La std scende da 86 (40M) a 53 (60M): la policy si consolida su un equilibrio mediocre "combatti un po', esplora moderato, mai vince", abbandonando l'exploration policy stabile e ad alto reward di CNN_3.
+- **Root cause: policy segregation visiva (limite strutturale, NON di reward shaping)**. La CnnPolicy impara policy separate per aspetto visivo: gli env curriculum (che partono già avanti) imparano a combattere e raccolgono i mega-bonus → ep_rew_mean training sale; gli env start.state imparano a esplorare. Le due policy **non transferiscono** perché la rete le associa a scene visive diverse. Il mega-bonus 80× ha cambiato il comportamento nei curriculum env (in_battle ora >0) ma ha destabilizzato la policy start.state (explained_variance crolla a 0.25). Pattern di declino post-peak identico a CNN_3.
+- **Lesson finale del filone reward-shaping CNN**: dopo CNN_2/3/4, tre run consecutivi 0/10 badge da start.state con lo stesso pattern strutturale (training sale, eval non riflette, policy segregation). Il reward shaping ha raggiunto il suo limite: aumentare i waypoint cambia COSA fanno i curriculum env, non fa GENERALIZZARE la policy a start.state. Il segnale di reward denso non basta — manca un segnale di **novelty intrinseco e visivo** che spinga la policy start.state a uscire e continuare a esplorare territorio nuovo a prescindere dai waypoint hardcoded.
+- **Decisione 2026-06-05**: pivot a **KNN visual novelty** (approccio Whidden / PokemonRedExperiments). → PPO_CNN_5.
+  - **CORRECTION 2026-06-09**: after inspecting the reference repo, Whidden's **V2** (the version that
+    reaches Cerulean = past the 1st gym) **replaced KNN with coordinate-based exploration** — which this
+    project already has (`visited_tiles` keyed on `(map_bank, map_number, local_x, local_y)`). KNN is the
+    *abandoned* V1. So PPO_CNN_5 does **not** add KNN; it realigns the existing setup to the V2 recipe.
+
+---
+
+## PPO_CNN_5 — Whidden V2 realignment: reward rescale + pure single-start (2026-06-09, RECIPE LOGGED, RUN PENDING)
+
+**Hypothesis**: the blocker across CNN_2..4 was not representation (env is already CNN + frame-stack like
+PokemonRedExperiments) nor "reward-shaping exhaustion", but five concrete divergences from Whidden V2:
+inverted reward scale, heterogeneous curriculum (policy segregation), no level/opponent reward, no
+self-state in obs, over-long episodes. CNN_5 fixes scale + curriculum + level reward + episode length
+first (cheap validation); self-state in obs and battle competence are deferred to Phase 4.
+
+- **30M steps (SHORT VALIDATION)**, **12 envs**, lr=1.5e-4, n_steps=2048, batch=512, n_epochs=4,
+  ent_coef=0.03, clip_range=0.1, gamma=0.999, gae_lambda=0.95, VecFrameStack(4). CHECKPOINT_FREQ=5M.
+- **Curriculum**: PURE single start — **12× start.state** (was 3×start + 5 mixed). Removes the
+  visually-keyed sub-policies that never transferred to start.state in eval (the CNN_4 segregation cause).
+- **Reward realigned (`env/rewards.py`)** — every term single-digit, global `REWARD_SCALE = 0.1`:
+  - new tile **+0.02** (dense PRIMARY driver) · new map first-entry (lifetime) **+1.0**
+  - level-sum increase **+1.0 × Δmax** · opponent level **+0.2 × Δmax** (in-battle only, clamped 1..100)
+  - story event count **+1.0 × Δmax** (latched flags: egg/elm/trainer1/trainer2) · rival **+1.0** (latched falling edge)
+  - heal out of battle **+2.0** · death **−1.0** · badge (zephyr) **+10.0**
+  - **REMOVED**: per-episode mega-waypoints (+300/+500), wild-battle penalty, flat step penalty, catch
+    bonus, big one-shot map milestones. **DEFERRED to Phase 4**: gym damage reward, gym battle-exit reward.
+  - Running maxima tracked via new `reward_maxes` dict (`make_reward_maxes`, reset per episode), mutated
+    in place by `compute_reward` — same pattern as `visited_maps`/`episode_maps`. Optional arg (defaults
+    None) so the dead MLP env still imports.
+- **`norm_reward=False`** (`train_cnn.py`): rewards are now well-scaled, so reward normalization is
+  unnecessary — and was harmful before (running-std dominated by +1000 spikes crushed the dense signal).
+- **MAX_STEPS 2¹⁶ → 2¹⁵** (32768): more episode resets → better credit assignment.
+- **Bug fixes (Phase 0)**:
+  - GIF crash: `train_cnn.make_env` now passes `gif_dir=None` (the relative `../runs/gifs` default crashed
+    CNN_2 at 95%).
+  - eval badge detection: `evaluate_cnn` now reads `infos[0]["zephyr"]` (terminal-step info), not a
+    post-auto-reset RAM read — the old code returned `badge=no` even on a win.
+  - op_level stale-RAM bug: enemy level (`0xD0FC`) is garbage outside battle; reward now gated on
+    `battle_type > 0` + legal-range clamp.
+- **New instrumentation**: per-EPISODE navigation metric `nav/reach_{cherrygrove,route31,violet_west,
+  violet_main,gym}` (fraction of episodes reaching each waypoint) + `nav/ep_max_waypoint`. Logged on
+  episode end (NOT step-averaged), so it is un-confounded by dwell time. This is the honest success signal
+  — `ep_rew_mean` misled CNN_2..4 (training rose while eval stayed 0/10).
+- **Success gate**: `nav/reach_violet_main` trending → ~0.5 by 30M ⇒ recipe works ⇒ scale up (Phase 5) +
+  Phase 4 battle competence. Flatline at 0 ⇒ revisit the tile weight before spending more compute.
+- **Result (COMPLETED 30M, 2026-06-09)**: realignment WORKED at the hard part, but the frontier STALLED at Route 31.
+  - `nav/reach_cherrygrove` → **1.0** (100% of episodes from ~6.6M); `nav/reach_route31` firmed to **1.0** by 30M.
+  - `nav/reach_violet_west` / `reach_gym` = **0.000 through the final rollout**; `nav/ep_max_waypoint` capped at exactly **2.0** (zero variance).
+  - `ep_rew_mean` plateaued ~1.75 (flat the entire second half); `entropy_loss` -1.89 (healthy, NO collapse);
+    `visited_tiles` ~600-850; `in_battle` ~0.15 (fights wild battles without dying, hp_ratio ~0.9).
+  - **First run in 23 to escape New Bark and reliably hold 40% of the route** — no collapse, no policy segregation.
+- **Root cause of the stall**: exploration novelty was **EPISODE-scoped** → re-treading the known New Bark→Route 31
+  corridor pays the full tile reward every episode → no directional gradient to push into unexplored Violet. The
+  lifetime map bonuses that drove segment 1 are consumed. (Whidden V2 uses **persistent** coordinate novelty to
+  avoid exactly this — only genuinely-new territory pays, so the frontier keeps advancing.)
+- **Bug found**: `CHECKPOINT_FREQ_CNN` is counted by SB3 in callback-calls (= timesteps / n_envs), so 5M × 12 envs
+  = 60M > 30M total → **no intermediate checkpoints saved, only `PPO_CNN_5_final.zip`**.
+- **Lesson**: scale realignment + single-start solved escape + segment-1 navigation, but a flat per-tile exploration
+  reward cannot cross distant chokepoints. → **PPO_CNN_6**: hybrid exploration (small episode-new +0.005 to keep the
+  corridor warm + dominant **lifetime-new +0.02** for frontier expansion), **warm-started from `PPO_CNN_5_final`**,
+  with the checkpoint-frequency bug fixed (save_freq divided by N_ENVS).
+
+---
+
+## PPO_CNN_6 — Lifetime tile-novelty (warm-start from CNN_5), STOPPED ~55% (2026-06-09)
+
+**Pure single-start + lifetime novelty → reward death-spiral; frontier still walled at Route 31.**
+
+- 30M target (stopped ~16.7M), 12× start.state, warm-started from `PPO_CNN_5_final`.
+  Reward: episode-new **+0.005** + lifetime-new **+0.02** (×0.1).
+- **Result**: `nav/reach_violet_west` = **0.000** throughout; `ep_max_waypoint` capped at 2.0 (same wall as CNN_5).
+  `ep_rew_mean` **declined monotonically +2.59 → +0.38**; `visited_tiles` 570 → 380; `ep_len_mean` 32768 → 28565.
+- **Root cause**: lifetime novelty SATURATES. Once the known corridor is "seen forever", re-tread pays only the
+  tiny +0.005 trail reward and the lifetime bonus never fires at the *undiscovered* frontier — so the dense corridor
+  reward that kept CNN_5 busy was stripped away with nothing to replace it. The agent contracted into a smaller,
+  lower-reward routine. Novelty only pushes a frontier the agent OCCASIONALLY crosses; it can't CREATE discovery.
+- **Bonus**: confirmed the checkpoint-freq fix (intermediate checkpoints at 3/6/9/12/15M saved).
+- **Lesson**: reward-shaping (episode vs lifetime novelty) cannot solve a DISCOVERY problem. Reverted in CNN_7.
+
+---
+
+## PPO_CNN_7 — Small curriculum + realigned reward (warm-start), COMPLETED 30M (2026-06-09 → 2026-06-10)
+
+**Curriculum made the start-state policy CATASTROPHICALLY FORGET segment-1 navigation — exposed only by the new start-state-filtered nav metric. `ep_rew_mean` ~1.5 hid the regression completely.**
+
+- 30M, 12 envs = **8× start + 2× route_31 (=Violet West 26,2) + 2× violet_city (10,5)**, warm-started from `PPO_CNN_5_final`.
+- Reward reverted to CNN_5 episode-novelty (**+0.02/new tile**, ×0.1). `nav/reach_*` filtered to start.state episodes
+  (`info["from_start"]`) so curriculum envs (which begin past the waypoints) can't inflate it.
+- **Result**: `ep_rew_mean` stayed a healthy ~1.5 (LOOKED fine), but the start-state nav metric **COLLAPSED**:
+  `nav/ep_max_waypoint` 2.0 (warm-start) → **0.0 by ~4M**, flat for the rest of the run; `nav/reach_cherrygrove`
+  and `reach_route31` fell **1.0 → 0.0**. `reach_violet_west`+ = 0 throughout. The start policy forgot how to leave New Bark.
+- **Root cause**: curriculum envs start in UNEXPLORED Violet (high novelty reward) while start envs re-tread KNOWN
+  New Bark→Route 31 (low reward). This reward asymmetry makes PPO's shared-policy updates favor Violet behavior,
+  degrading start-state navigation. The realigned reward reduced but did NOT eliminate the asymmetry — fresh
+  territory always out-earns known territory. `ep_rew_mean` masked it because the curriculum envs kept earning;
+  the `from_start` filter is the only reason the regression was visible.
+- **Lesson**: even a SMALL fixed curriculum on the realigned reward sacrifices the start-state policy (segregation /
+  catastrophic forgetting). **Fixed curricula are ruled out for the discovery problem.** Three approaches now failed on
+  the same structural tension: CNN_5 (stall — can't discover), CNN_6 (death-spiral — novelty saturates),
+  CNN_7 (forgetting — curriculum segregates). → architectural pivot needed: **frontier state-sharing**
+  (Go-Explore-lite), where reset states are the start policy's OWN trajectory edge — continuous with start-state
+  experience, so no high-reward island and no segregation.
+
+---
+
 ## Filone CnnPolicy — Inizia da PPO_19 (2026-06-03)
 
 Dopo 18 run di MlpPolicy con badge=0/10 da start.state in ogni eval, il problema è **rappresentazionale**, non di reward shaping. Riferimento: PokemonRedExperiments (Peter Whidden) che ha risolto Pokemon Red con CnnPolicy + frame stack.
@@ -339,6 +533,10 @@ Dopo 18 run di MlpPolicy con badge=0/10 da start.state in ogni eval, il problema
 - **Damage reward in wild battles** (PPO_16 lesson) — `(prev_enemy_hp_ratio - enemy_hp_ratio) * 5.0` indistinto tra wild/trainer/gym crea local optima: l'agente combatte wild Pokémon (reward immediato +5×delta per turno) invece di navigare verso il gym (reward distante). Risultato: `in_battle` smoothed = 0.124, badge=0/10 in eval. Rimosso in PPO_17. Se mai re-introdotto, deve essere map-constrained al gym (10,7).
 - **Wild battle penalty -3.0/step** (PPO_17 lesson, fermato a 22%) — overshoot opposto del damage_reward: penalty troppo aggressivo crea stallo oscillante. 1 wild battle media (80 step) = −240; per attraversare Route 30+31 con 5-10 wild battle inevitabili: −1,200/−2,400 vs +455 waypoint reward → netto negativo per muoversi → agente preferisce stare fermo. Calibrato a -1.0 in PPO_18.
 - **MlpPolicy + state vector** (filone PPO_1→PPO_18 chiuso 2026-06-03) — 18 run con tutte le combinazioni di reward shaping, curriculum, observation features. Mai badge da start.state in eval. Convergenza a "stable suboptimal" in PPO_18 con `explained_variance` 0.99+ e `policy_gradient_loss` ~0. Lo state vector non porta informazione spaziale sufficiente per piani di navigazione lunghi. Filone abbandonato a favore di CnnPolicy.
+- **CnnPolicy senza curriculum diversity** (PPO_CNN_1 lesson, 2026-06-03) — 4×start.state convergeva a stable suboptimal a -500 in 4M step. Il problema non era solo rappresentazionale ma anche di propagazione del reward: il policy network ha bisogno di esempi "facili" dai curriculum envs per imparare associazioni stato→azione che generalizzano. Confermato che 8 envs misti + clip stretto + batch grande sblocca il break-even (PPO_CNN_2).
+- **Damage reward map-constrained al gym da solo** (PPO_CNN_3 lesson) — inerte da start.state: l'agente non raggiunge mai il gym, quindi il segnale non propaga. In più non risolve l'attrattore "resta a New Bark" → in_battle=0% in eval. Va abbinato a un incentivo forte all'uscita.
+- **Mega-bonus waypoint per-episodio (80×)** (PPO_CNN_4 lesson) — aumentare i waypoint a +300/+500 fa salire ep_rew_mean in training (i curriculum env li raccolgono) ma NON fa generalizzare la policy a start.state, e destabilizza il value (explained_variance 0.25). Eval peggiore di CNN_2/CNN_3. Sintomo di **policy segregation visiva**: la CnnPolicy impara policy distinte per aspetto visivo che non transferiscono. Limite strutturale del reward shaping con curriculum eterogeneo.
+- **Reward shaping per risolvere policy segregation** (filone PPO_CNN_2→4 chiuso 2026-06-05) — tre run consecutivi 0/10 badge da start.state. Calibrare i reward (wild penalty, damage, waypoint) cambia il comportamento dei curriculum env ma non fa generalizzare a start.state. Serve un segnale di **novelty intrinseco visivo** (KNN frame embedding) invece di waypoint hardcoded. → filone KNN (PPO_CNN_5).
 
 ---
 

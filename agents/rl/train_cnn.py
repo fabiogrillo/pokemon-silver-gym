@@ -11,7 +11,6 @@ Differences from train_mlp.py:
                   NORM_REWARD=True (same as MLP — running mean/std on reward)
 
 CNN-specific config constants are read from config.py (LEARNING_RATE_CNN, N_STEPS_CNN, etc.).
-TODO: define those constants in config.py before launching.
 """
 
 import os
@@ -40,19 +39,42 @@ def get_device():
 
 
 class InfoLoggerCallback(BaseCallback):
-    """Logs mean values of custom info dict keys to TensorBoard at each rollout."""
+    """Logs custom metrics to TensorBoard at each rollout.
+
+    Two kinds of metric:
+      - per-STEP means (reward components, tiles, hp, battle): averaged over every step.
+      - per-EPISODE navigation progress: recorded ONLY when an episode ends (done), so it is
+        NOT confounded by how long the agent dwells in a map. `max_waypoint` is a monotonic
+        ordinal 0..5 (0=start, 1=Cherrygrove, 2=Route30-gate, 3=Route31 POST-GATE, 4=Violet, 5=Gym).
+        We log the mean furthest point reached AND the fraction of episodes that reached each
+        waypoint. `nav/reach_route31` is the key signal: reaching post-gate Route 31 means the agent
+        cleared the two-trainer STORY GATE (only possible after delivering the egg to Elm).
+
+        NOTE (PPO_CNN_8): the reverse curriculum uses a SINGLE start-state per run, so we count
+        ALL finished episodes — the metric cleanly reflects that stage's start. (The CNN_7
+        from_start filter is no longer needed: there is no mixed curriculum to contaminate it.)
+    """
+
+    WAYPOINT_NAMES = ["cherrygrove", "route30_gate", "route31", "violet", "gym"]
 
     def __init__(self):
         super().__init__()
         self._keys = ["reward_exploration", "reward_events", "reward_penalties",
                       "visited_tiles", "hp_ratio", "in_battle"]
         self._buffers = {k: [] for k in self._keys}
+        self._ep_waypoints = []  # furthest waypoint of each episode that finished this rollout
 
     def _on_step(self) -> bool:
         for info in self.locals["infos"]:
             for k in self._keys:
                 if k in info:
                     self._buffers[k].append(info[k])
+        # On episode end, SB3 keeps THIS step's info as infos[i] → its max_waypoint is the
+        # episode's furthest point. Record it once per finished episode (un-dwell-confounded).
+        # Single start-state per run (reverse curriculum) → counting all episodes is clean.
+        for info, done in zip(self.locals["infos"], self.locals["dones"]):
+            if done and "max_waypoint" in info:
+                self._ep_waypoints.append(info["max_waypoint"])
         return True
 
     def _on_rollout_end(self) -> None:
@@ -61,11 +83,19 @@ class InfoLoggerCallback(BaseCallback):
                 self.logger.record(f"custom/{k}", np.mean(values))
         self._buffers = {k: [] for k in self._keys}
 
+        if self._ep_waypoints:
+            wp = np.array(self._ep_waypoints)
+            self.logger.record("nav/ep_max_waypoint", float(wp.mean()))
+            for ordinal, name in enumerate(self.WAYPOINT_NAMES, start=1):
+                self.logger.record(f"nav/reach_{name}", float((wp >= ordinal).mean()))
+        self._ep_waypoints = []
+
 
 def make_env(rank, state_path):
     def _init():
         env = PokemonEnvCNN(
             config.ROM_PATH, state_path, headless=True,
+            gif_dir=None,  # no GIFs during training (saves disk space and overhead)
             gif_prefix=config.RUN_NAME,  # ensures GIF filenames carry the run identity
         )
         env.reset(seed=rank)
@@ -75,9 +105,6 @@ def make_env(rank, state_path):
 
 if __name__ == "__main__":
     device = get_device()
-    # TODO: define a CNN-specific curriculum (or reuse config.CURRICULUM_STATES).
-    # Note: with N_ENVS_CNN=4 the curriculum must sum to 4. Suggested:
-    #   2×start + 1×before_elm_delivery + 1×violet_city_gym
     assert sum(n for _, n in config.CURRICULUM_STATES_CNN) == config.N_ENVS_CNN, \
         f"CURRICULUM_STATES_CNN counts must sum to N_ENVS_CNN ({config.N_ENVS_CNN})"
 
@@ -93,26 +120,47 @@ if __name__ == "__main__":
     vec_env = VecMonitor(vec_env)
     vec_env = VecFrameStack(vec_env, n_stack=4)           # (72,80,3) → (72,80,12)
     vec_env = VecTransposeImage(vec_env)                  # → (12,72,80) for PyTorch
-    vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=True,
+    # norm_reward=False (PPO_CNN_5): the Phase-1 realignment already keeps every reward term
+    # single-digit (×REWARD_SCALE), so reward normalization is unnecessary — and harmful before,
+    # because the running-std was dominated by rare +1000 spikes, crushing the dense exploration
+    # signal toward zero. Matches Whidden V2 (raw, well-scaled rewards).
+    vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=False,
                            clip_obs=10.0, gamma=config.GAMMA)
 
-    model = PPO(
-        "CnnPolicy", vec_env, verbose=1,
-        learning_rate=config.LEARNING_RATE_CNN,
-        n_steps=config.N_STEPS_CNN,
-        batch_size=config.BATCH_SIZE_CNN,
-        n_epochs=config.N_EPOCHS_CNN,
-        gamma=config.GAMMA,
-        gae_lambda=config.GAE_LAMBDA,
-        ent_coef=config.ENT_COEF_CNN,
-        tensorboard_log=config.LOG_DIR,
-        device=device,
-    )
+    # Warm-start (fine-tune) from a checkpoint if configured, else train a fresh policy.
+    # PPO.load restores the saved policy + hyperparameters; we pass env + tensorboard_log so the
+    # loaded model logs to a new run dir. learn(reset_num_timesteps=True) restarts the step counter.
+    if config.INIT_FROM_CHECKPOINT and os.path.exists(config.INIT_FROM_CHECKPOINT):
+        print(f"[init] Warm-starting (fine-tune) from {config.INIT_FROM_CHECKPOINT}")
+        model = PPO.load(
+            config.INIT_FROM_CHECKPOINT, env=vec_env, device=device,
+            tensorboard_log=config.LOG_DIR,
+        )
+    else:
+        if config.INIT_FROM_CHECKPOINT:
+            print(f"[init] WARNING: {config.INIT_FROM_CHECKPOINT} not found — training from scratch")
+        else:
+            print("[init] Training from scratch (no warm-start checkpoint set)")
+        model = PPO(
+            "CnnPolicy", vec_env, verbose=1,
+            learning_rate=config.LEARNING_RATE_CNN,
+            clip_range=0.1,
+            n_steps=config.N_STEPS_CNN,
+            batch_size=config.BATCH_SIZE_CNN,
+            n_epochs=config.N_EPOCHS_CNN,
+            gamma=config.GAMMA,
+            gae_lambda=config.GAE_LAMBDA,
+            ent_coef=config.ENT_COEF_CNN,
+            tensorboard_log=config.LOG_DIR,
+            device=device,
+        )
 
     checkpoint_dir = os.path.join(config.MODEL_DIR, config.RUN_NAME)
     callbacks = [
         CheckpointCallback(
-            save_freq=config.CHECKPOINT_FREQ_CNN,
+            # SB3 counts save_freq in callback-calls (= timesteps / n_envs), so divide to get the
+            # intended interval in TIMESTEPS. (CNN_5 bug: raw 5M × 12 envs = 60M never fired.)
+            save_freq=max(config.CHECKPOINT_FREQ_CNN // config.N_ENVS_CNN, 1),
             save_path=checkpoint_dir,
             name_prefix=config.RUN_NAME,
         ),

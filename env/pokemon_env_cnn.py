@@ -3,9 +3,18 @@ import numpy as np
 from .pyboy_wrapper import PyBoyWrapper
 from .ram_reader import RAMReader
 from .actions import ACTION_SPACE
-from .rewards import compute_reward, make_prev_state
+from .rewards import (
+    compute_reward, make_prev_state, make_reward_maxes,
+    CHERRYGROVE, ROUTE_30_GATE, ROUTE_31, VIOLET_CITY, GYM_MAP,
+)
 
-MAX_STEPS = 2**16
+MAX_STEPS = 2**15  # 32768 env-steps (~halved from 2**16): more episode resets → better
+                   # credit assignment, still long enough to reach the gym (~14.6k steps to badge)
+
+# Ordered route waypoints (ordinal = index + 1) — drives per-episode navigation progress logging
+# to TensorBoard, independent of reward. 0 = start/New Bark … 5 = Violet Gym.
+# Ordinal 3 (ROUTE_31, post-gate) = the agent has CLEARED the two-trainer story gate.
+WAYPOINT_ORDER = [CHERRYGROVE, ROUTE_30_GATE, ROUTE_31, VIOLET_CITY, GYM_MAP]
 
 class PokemonEnvCNN(gym.Env):
     """CNN-friendly Gymnasium environment for Pokemon Silver."""
@@ -29,12 +38,18 @@ class PokemonEnvCNN(gym.Env):
         self.observation_space = gym.spaces.Box(low=0, high=255, shape=(72,80,3), dtype=np.uint8) # RGB image from PyBoy's get_screen_ndarray()
 
         self.prev_state = {}
-        self.visited_tiles = set()   # Track visited tiles for exploration reward
+        self.reward_maxes = {}       # Per-episode running maxima (level/opponent/event rewards)
+        self.visited_tiles = set()           # EPISODE-scoped tiles → small trail-following reward
+        self.visited_tiles_lifetime = set()  # LIFETIME-scoped tiles → frontier-expansion reward (never reset)
         self.visited_maps  = set()   # Track visited (bank, map) pairs
         self.episode_maps = set()  # Track maps visited within the current episode for waypoint rewards
 
         self.steps = 0  # Step counter for episode length tracking
         self.episode_count = 0
+        self.max_waypoint = 0  # Furthest route waypoint reached this episode (0..5)
+        # True only for start.state envs — lets the nav metric measure the START-START frontier,
+        # uncontaminated by curriculum envs that begin past the waypoints (PPO_CNN_7).
+        self.is_start_env = str(state_path).endswith("start.state")
 
     def _get_obs(self, screen):
         """
@@ -58,10 +73,19 @@ class PokemonEnvCNN(gym.Env):
         new_tile = tile not in self.visited_tiles
         if new_tile:
             self.visited_tiles.add(tile)
+        new_tile_lifetime = tile not in self.visited_tiles_lifetime
+        if new_tile_lifetime:
+            self.visited_tiles_lifetime.add(tile)
+
+        # Track furthest route waypoint reached this episode (nav-progress logging, not reward)
+        current_map = (ram_state["map_bank"], ram_state["map_number"])
+        if current_map in WAYPOINT_ORDER:
+            self.max_waypoint = max(self.max_waypoint, WAYPOINT_ORDER.index(current_map) + 1)
 
         # Compute the reward based on RAM state changes and exploration
         reward, reward_info = compute_reward(
-            ram_state, self.prev_state, new_tile, self.visited_maps, self.episode_maps
+            ram_state, self.prev_state, new_tile, self.visited_maps, self.episode_maps,
+            self.reward_maxes, new_tile_lifetime,
         )
 
         terminated = ram_state['zephyr'] or (ram_state['hp_ratio'] <= 0 and ram_state['battle_type'] == 0)  # Episode ends if we win or lose
@@ -74,6 +98,10 @@ class PokemonEnvCNN(gym.Env):
             "hp_ratio": ram_state["hp_ratio"],
             "map_number": ram_state["map_number"],
             "in_battle": int(ram_state["battle_type"] > 0),
+            "zephyr": bool(ram_state["zephyr"]),
+            "badge_count": ram_state["badge_count"],
+            "max_waypoint": self.max_waypoint,
+            "from_start": self.is_start_env,
         }
 
         self.prev_state = make_prev_state(ram_state) # Store only the relevant RAM values for reward edge detection
@@ -100,11 +128,15 @@ class PokemonEnvCNN(gym.Env):
 
         self.visited_tiles = set()
         self.episode_maps = set()
+        self.max_waypoint = 0
 
         ram_state = self.ram_reader.read_all()
         self.prev_state = make_prev_state(ram_state)
+        self.reward_maxes = make_reward_maxes(ram_state)
 
-        self.visited_tiles.add((ram_state["map_bank"], ram_state["map_number"], ram_state["local_x"], ram_state["local_y"]))
+        init_tile = (ram_state["map_bank"], ram_state["map_number"], ram_state["local_x"], ram_state["local_y"])
+        self.visited_tiles.add(init_tile)
+        self.visited_tiles_lifetime.add(init_tile)  # lifetime set is NOT cleared on reset
         self.visited_maps.add((ram_state["map_bank"], ram_state["map_number"]))
         return self._get_obs(screen), {}
 
