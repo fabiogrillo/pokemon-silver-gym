@@ -6,10 +6,12 @@ from .actions import ACTION_SPACE
 from .rewards import (
     compute_reward, make_prev_state, make_reward_maxes,
     CHERRYGROVE, ROUTE_30_GATE, ROUTE_31, VIOLET_CITY, GYM_MAP,
+    MR_POKEMON_BIT, ELM_BIT,
 )
 
-MAX_STEPS = 2**15  # 32768 env-steps (~halved from 2**16): more episode resets → better
-                   # credit assignment, still long enough to reach the gym (~14.6k steps to badge)
+MAX_STEPS = 2**16  # 65536 env-steps (PPO_CNN_10): the optimal badge path is ~14.6k steps and now
+                   # includes the egg backtrack + trainer battles + heals — 2**15 left only 2.2×
+                   # slack for an imperfect policy; 2**16 ≈ 4.5× the optimal path.
 
 # Ordered route waypoints (ordinal = index + 1) — drives per-episode navigation progress logging
 # to TensorBoard, independent of reward. 0 = start/New Bark … 5 = Violet Gym.
@@ -35,7 +37,14 @@ class PokemonEnvCNN(gym.Env):
         self.gif_frames = []            # buffer for current episode's frames
 
         self.action_space = ACTION_SPACE
-        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(72,80,3), dtype=np.uint8) # RGB image from PyBoy's get_screen_ndarray()
+        # Dict obs (PPO_CNN_10): screen image + VISITED-MASK 4th channel (PWhiddy mechanism — an
+        # explicit frontier gradient at the map-door chokepoints) + RAM-derived state vector
+        # (HP / level / battle / story flags), so the policy can condition on state it could never
+        # read from pixels (e.g. the Route 30 fork looks IDENTICAL pre/post egg delivery).
+        self.observation_space = gym.spaces.Dict({
+            "image":  gym.spaces.Box(low=0, high=255, shape=(72, 80, 4), dtype=np.uint8),
+            "vector": gym.spaces.Box(low=0.0, high=1.0, shape=(11,), dtype=np.float32),
+        })
 
         self.prev_state = {}
         self.reward_maxes = {}       # Per-episode running maxima (level/opponent/event rewards)
@@ -51,13 +60,44 @@ class PokemonEnvCNN(gym.Env):
         # uncontaminated by curriculum envs that begin past the waypoints (PPO_CNN_7).
         self.is_start_env = str(state_path).endswith("start.state")
 
-    def _get_obs(self, screen):
-        """
-        Convert the raw screen from PyBoy into the observation format for the agent.
-        For CNN input, we can use the RGB values directly, possibly downsampled.
-        """
-        rgb = screen[:, :, :3]  # Drop alpha channel if present
-        return rgb[::2, ::2].astype(np.uint8)  # Downsample to 72x80
+    def _state_vector(self, ram):
+        """RAM-derived self-state vector, all in [0,1]. Enemy fields are zeroed OUTSIDE battle because
+        the enemy RAM (0xD0FC/0xD0FF) holds garbage there (same guard as the op_level reward)."""
+        in_battle = 1.0 if ram["battle_type"] > 0 else 0.0
+        return np.clip(np.array([
+            ram["hp_ratio"],                                 # lead Pokemon HP fraction
+            ram["lead_level"] / 100.0,                       # lead level
+            ram["party_count"] / 6.0,                        # team size
+            ram["badge_count"] / 8.0,                        # badges earned
+            in_battle,                                       # currently in a battle?
+            ram["enemy_hp_ratio"] * in_battle,               # enemy HP fraction (battle only)
+            (ram["enemy_lead_level"] / 100.0) * in_battle,   # enemy level (battle only)
+            1.0 if ram["flag_elm_mr_pokemon"] & MR_POKEMON_BIT else 0.0,  # egg received
+            1.0 if ram["flag_elm_mr_pokemon"] & ELM_BIT else 0.0,         # egg delivered (gate open)
+            ram["route_trainers_beaten"] / 4.0,              # Route 30/31 trainers beaten
+            ram["gym_trainers_beaten"] / 2.0,                # gym trainers beaten
+        ], dtype=np.float32), 0.0, 1.0)
+
+    def _visited_mask(self, ram):
+        """72x80 uint8 mask: 255 on the 8x8 px block of each VISIBLE metatile already visited this
+        episode, 0 otherwise. The GB screen shows 10x9 metatiles with the player at metatile (4,4);
+        at half-res one metatile = 8x8 px. Gives the CNN explicit 'where have I been' spatial memory —
+        the frontier (dark area) is the direction the tile reward will pay."""
+        mask = np.zeros((72, 80), dtype=np.uint8)
+        bank, num = ram["map_bank"], ram["map_number"]
+        px, py = ram["local_x"], ram["local_y"]
+        for row, dy in enumerate(range(-4, 5)):      # 9 metatile rows
+            for col, dx in enumerate(range(-4, 6)):  # 10 metatile cols
+                if (bank, num, px + dx, py + dy) in self.visited_tiles:
+                    mask[row * 8:(row + 1) * 8, col * 8:(col + 1) * 8] = 255
+        return mask
+
+    def _get_obs(self, screen, ram_state):
+        """Dict observation: downsampled RGB screen + visited-mask channel (→ CNN) + state vector (→ MLP)."""
+        rgb = screen[:, :, :3]                          # drop alpha
+        image = rgb[::2, ::2].astype(np.uint8)          # downsample to 72x80
+        image = np.dstack([image, self._visited_mask(ram_state)])  # (72, 80, 4)
+        return {"image": image, "vector": self._state_vector(ram_state)}
     
     def step(self, action):
         screen = self.pyboy.step(action, n=16) # Advance the emulator by 16 frames (1/4 second at 60 FPS)
@@ -102,13 +142,19 @@ class PokemonEnvCNN(gym.Env):
             "badge_count": ram_state["badge_count"],
             "max_waypoint": self.max_waypoint,
             "from_start": self.is_start_env,
+            # Story/combat progress flags — consumed by InfoLoggerCallback at episode end
+            # to compute nav/egg_*_rate, nav/*_trainers_mean and nav/badge_rate.
+            "egg_received": bool(ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT),
+            "egg_delivered": bool(ram_state["flag_elm_mr_pokemon"] & ELM_BIT),
+            "route_trainers_beaten": ram_state["route_trainers_beaten"],
+            "gym_trainers_beaten": ram_state["gym_trainers_beaten"],
         }
 
         self.prev_state = make_prev_state(ram_state) # Store only the relevant RAM values for reward edge detection
         self.steps += 1
         truncated = self.steps >= MAX_STEPS
 
-        obs = self._get_obs(screen) # Return the processed RGB observation
+        obs = self._get_obs(screen, ram_state)  # Dict obs: screen image + self-state vector
 
         return obs, reward, terminated, truncated, info
     
@@ -138,7 +184,7 @@ class PokemonEnvCNN(gym.Env):
         self.visited_tiles.add(init_tile)
         self.visited_tiles_lifetime.add(init_tile)  # lifetime set is NOT cleared on reset
         self.visited_maps.add((ram_state["map_bank"], ram_state["map_number"]))
-        return self._get_obs(screen), {}
+        return self._get_obs(screen, ram_state), {}
 
     def render(self):
         """

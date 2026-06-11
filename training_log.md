@@ -486,6 +486,116 @@ first (cheap validation); self-state in obs and battle competence are deferred t
 
 ---
 
+## PPO_CNN_8 — Egg-quest STORY GATE + reverse curriculum (2026-06-09 → 2026-06-10, IN PROGRESS)
+
+**THE big discovery (user's gameplay knowledge): the "Route 31 wall" of CNN_5/6/7 is a STORY GATE, not a
+navigation chokepoint.** Two trainers block Route 30's WEST branch until the Mystery Egg is delivered to Elm
+(confirmed: Bulbapedia + gameplay). The agent never did the egg quest (`reward_events`=0) → permanently
+blocked. This OVERTURNS the CNN_5/6/7 "discovery" diagnosis. (The CNN_7 "frontier state-sharing" plan was
+abandoned the moment the gate was found — state-sharing can't open a scripted gate.)
+
+**Map constants RE-VERIFIED 2026-06-10 by walking the route (instrumented save_state.py). Old labels WRONG:**
+(26,3)=Cherrygrove · (26,1)=Route 30 north / GATE zone · (26,2)=Route 31 POST-GATE (Dark Cave area) ·
+(26,11)=Route31↔Violet gatehouse · (10,5)=Violet · (10,7)=Gym · (26,10)=Mr.Pokemon's house · (3,70)=Dark Cave.
+Old code had `ROUTE_31`=(26,1) and `VIOLET_CITY_WEST`=(26,2) — both wrong; fixed. Route 30 forks: WEST→Route 31
+(gated), EAST→Mr.Pokemon's house (dead-end).
+
+**Approach: REVERSE CURRICULUM** — single start-state per run (→ no segregation), warm-start chain. Egg events
+weighted up: `egg_received`+3, `egg_delivered`+5 (opens gate); Mr.Pokemon house +2 gated on "egg not yet received".
+
+- **Stage 1** (`egg_delivered`, warm CNN_5): reached (26,1) gate zone but did NOT cross to (26,2) even with the
+  gate OPEN. Causes: (a) a BUG — Mr.Pokemon house +2 fired post-egg, luring the agent to the EAST dead-end off
+  the correct WEST path; (b) warm-start aversion. `ep_max_waypoint`=2 flat.
+- **Stage 1b** (Mr.Pokemon reward gated on egg-not-received): agent now TRIED the west path — but DIED in the
+  battle gauntlet. `ep_len_mean` crashed 32768→17500 (early termination = blackouts), `in_battle` 0.5, `hp` 0.6.
+  `reach_route31` max 0.33, never consolidated. → **BATTLE COMPETENCE is a wall on the ROUTE itself**, not just at the gym.
+- **Crossing stage** (`crossing.state` = (26,1) doorstep PAST the west trainers, Totodile lv11): reliably crosses
+  to Route 31 (`reach_route31`=1.0), SURVIVES (`ep_len`=32768, `in_battle`~0.05, `hp`~0.98), explores Route 31
+  (~700 tiles) — but stalls at Route 31 (26,2) → Violet (10,5): `reach_violet`=0 flat. New chokepoint = the
+  GATEHOUSE building door (26,11).
+
+**Pattern / lessons (CNN_8):**
+- The agent broadly navigates but stalls at EVERY map-to-map transition, especially BUILDING DOORS (gatehouse,
+  exiting Mr.Pokemon's house). The flat per-tile exploration reward gives no gradient toward the specific exit/door tile.
+- BATTLE COMPETENCE (winning route trainers / surviving the grass) is a real wall, hit on the route before the
+  gym. Needs HP/level in obs + a battle reward (deferred Phase-4 work, now critical).
+- The reverse curriculum advances the frontier one chunk per run (west gauntlet → Route 31 → now Route31→Violet),
+  monotonic but slow (~1 chokepoint per 3h run).
+- **Next idea**: modest per-episode LATCHED waypoint rewards (Route31/gatehouse/Violet/gym, +2 each) — single-start-safe
+  (no segregation), latched (no cycling), small (no scale domination; the log even notes "per-episode is ok if small")
+  — to create a directional gradient through the map-door chokepoints.
+
+---
+
+## PPO_CNN_8_crossing_wp — Waypoint rewards from crossing.state (2026-06-10 21:36 → 06-11 00:05, STOPPED 27.4M/30M)
+
+Warm variant of the crossing stage WITH the new per-episode latched waypoint rewards (+2 each).
+
+- **Waypoint rewards WORK as a door gradient**: `reach_route31`=1.0 stable, `ep_max_waypoint`=3,
+  `ep_rew_mean` 1.73 (peak 2.16), full survival (`ep_len`=32768, `hp_ratio`=1.0).
+- **But**: `reach_violet`=0 flat for the whole run — the Route31→Violet GATEHOUSE door (26,11) was never
+  crossed despite its +2 waypoint waiting. The +2 (0.2 post-scale) is apparently too small vs ~700 tiles
+  (1.4 post-scale) of comfortable Route 31 exploration income.
+- **in_battle → 0.004**: TOTAL battle avoidance learned. No reward pays for fighting; battles only cost HP.
+
+## PPO_CNN_9_selfstate — First Dict-obs run, cold start (2026-06-11 00:08 → 02:22, STOPPED 23.8M/30M)
+
+First run with the new Dict observation (image + 7-float self-state vector) + MultiInputPolicy, cold start
+(old CnnPolicy checkpoints incompatible). Log: `runs/cnn9_train.log`.
+
+- Nav metrics PEAKED mid-run (`reach_route31` max 1.0, `ep_max_waypoint` max 3) then **collapsed to 0** by
+  the end. `ep_len_mean` fell 32768 → 22.7k (early terminations = blackouts), `in_battle` 0.097, final
+  `ep_rew_mean` 1.32 (peak 1.70).
+- **Pattern: battle-incompetence death spiral** — the agent pushes the frontier, gets killed by trainers/wilds,
+  the policy regresses to safe wandering. Same wall as stage1b, now visible end-to-end in one run.
+
+## PPO_CNN_9_gymtest — Phase-A battle test INSIDE the gym (2026-06-11 02:44 → 03:37, STOPPED 10.3M/30M) ⚠️ KEYSTONE
+
+Cold start from `violet_city_gym.state` (2 steps inside Falkner's gym): pure battle-competence test, no grass.
+
+- **The agent WALKS OUT of the gym and tours Violet City**: visited_tiles 614–866 (the gym alone has ~100),
+  `in_battle` peaked 0.63 early then decayed to 0.11, `ep_len` ~31.7k ≈ always truncation, **badge never won**,
+  `ep_rew_mean` 2.80 (earned by sightseeing, not fighting).
+- **Direct reward arithmetic confirms it is RATIONAL**: touring Violet ≈ 600 tiles × 0.02 = 12 pre-scale,
+  vs full gym fight chain = gym damage 6 + badge 10 = 16 pre-scale but discounted by risk of death and battle
+  length — exploration income structurally dominates combat income. The same inequality explains ALL the
+  avoidance/grinding failure modes of the last 30 runs.
+- **Conclusion**: this is not a representation or curriculum problem anymore — it is a reward-geometry problem.
+  → full redesign (PPO_CNN_10) instead of further mini-patches.
+
+---
+
+## PPO_CNN_10 — REDESIGN: event-dominant reward + story/combat obs + 150M single run (2026-06-11, PLANNED)
+
+Step-back redesign aligned with what actually worked in PokemonRedExperiments (PWhiddy) where events/badges
+dominate exploration ~10–50× cumulatively. One coherent change-set, then ONE long run with abort gates,
+instead of more 30M patch-runs. Plan file: `~/.claude/plans/rispetto-a-quello-che-sleepy-brook.md`.
+
+**Reward (pre-scale, REWARD_SCALE 0.1 unchanged)**: tiles +0.02 / new map +1 / waypoints +2 / Mr.Pokemon +2 /
+heal +2 / death −1 / op-level +0.2Δ / gym damage 3×Δ all KEPT. Raised: egg received 3→**8**, egg delivered
+5→**12**, rival 1→**3**, gym trainers 1→**5** each, badge 10→**30**. NEW: Route 30/31 trainer beaten +**5**
+each (×4: Joey, Mikey, Don, Wade — flags to verify via pret/pokegold + savestate diff + manual ram_scan
+session). Level cap (lead≤13 hack) → **saturation** `scaled = min(s, 15 + (s−15)/4)`, reward +1×Δscaled.
+
+**Sanity math (per-episode, pre-scale)**: wander ≈ 20 · grind ≈ 19 · avoid-battles ≈ 33 · **story-optimal ≈ 136**
+(dominates 4–7× globally; locally at the gym: fight chain 55 vs tour-Violet 12).
+
+**Obs**: vector 7→11 (+egg_received, +egg_delivered, +route_trainers/4, +gym_trainers/2 — the Route 30 fork is
+visually identical pre/post delivery, the policy literally cannot condition on it from pixels). Image
+(72,80,3)→(72,80,4): **visited-mask channel** (PWhiddy mechanism) for an explicit frontier gradient at doors.
+MAX_STEPS 2^15→**2^16** (optimal path ≈14.6k steps; old limit left 2.2× slack for backtrack+battles).
+
+**Run**: 12×start.state only, hyperparams UNCHANGED (attribution), 150M budget (~15h @ ~2700fps), ckpt 5M,
+go/no-go gates: 10M reach_cherrygrove≥0.8 & egg_received>0 · 25M egg_delivered≥0.3 · 50M reach_violet≥0.3 &
+in_battle∈[0.05,0.3] · 100M badge_rate>0 (else if reach_gym>0.3: bump gym damage 3→5, badge 30→50, warm-restart).
+New telemetry: nav/egg_received_rate, egg_delivered_rate, route_trainers_mean, gym_trainers_mean, badge_rate.
+
+**Ruled out by this redesign analysis**: resuming PPO_CNN_8_stage1 with higher ent_coef (east-fork bias is in
+the weights; stage1b already was that experiment post-bugfix and hit the battle wall) · catch/evolution rewards
+(not needed for Falkner — scope creep) · RecurrentPPO / PufferLib port (no failure traces to the optimizer).
+
+---
+
 ## Filone CnnPolicy — Inizia da PPO_19 (2026-06-03)
 
 Dopo 18 run di MlpPolicy con badge=0/10 da start.state in ogni eval, il problema è **rappresentazionale**, non di reward shaping. Riferimento: PokemonRedExperiments (Peter Whidden) che ha risolto Pokemon Red con CnnPolicy + frame stack.

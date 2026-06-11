@@ -20,6 +20,19 @@ actually clears the first gym in PokemonRedExperiments V2:
   - Per-episode mega-waypoints, wild-battle penalty, and the gym damage reward are
     GONE (the last is deferred to the Phase-4 battle-competence work).
 
+── PPO_CNN_10 redesign (event-dominant reward) ──────────────────────────────
+PPO_CNN_9_gymtest proved by direct arithmetic that exploration income structurally
+dominated story/combat income (touring Violet ≈ 12 pre-scale vs full gym fight ≈ 16
+discounted by death risk) — the root cause of EVERY avoidance/grinding local optimum.
+Realigned to PWhiddy's actual ratio (events/badges dominate exploration ~10-50×):
+  - Story chain raised: egg received +8, delivered +12, rival +3, badge +30.
+  - NEW: per-trainer-beaten event rewards (+5 each) for Route 30/31 trainers and the
+    two gym trainers — combat pays exactly where combat is mandatory.
+  - Level cap hack (lead<=13) replaced by PWhiddy-style SATURATION of the summed
+    party levels: full value up to 15, then 1/4 value — grinding self-extinguishes.
+  - Sanity math (pre-scale/episode): wander ≈ 20 · grind ≈ 19 · avoid-battles ≈ 33 ·
+    STORY-OPTIMAL ≈ 136. Locally at the gym: fight chain 55 vs tour-Violet 12.
+
 State tracking strategy:
 - prev_state:   previous-frame RAM values needed for edge detection (make_prev_state)
 - reward_maxes: per-episode running maxima for level/opponent/event rewards (make_reward_maxes)
@@ -54,6 +67,17 @@ VIOLET_GATEHOUSE = (26, 11)  # gate house between Route 31 and Violet City
 VIOLET_CITY      = (10, 5)   # Violet City main
 GYM_MAP          = (10, 7)   # Violet City Gym (Falkner)
 
+# Per-episode forward waypoints — modest directional breadcrumbs that pull the policy through the
+# map-door chokepoints (the flat per-tile reward gives no gradient toward a specific exit/door tile).
+# LATCHED per episode (no cycling), small (no scale domination), and SAFE only because the reverse
+# curriculum is single-start: a MIXED curriculum + per-episode bonuses caused the CNN_2..4 segregation.
+WAYPOINT_REWARDS = {
+    ROUTE_31:         2.0,   # crossed past the gate into Route 31
+    VIOLET_GATEHOUSE: 2.0,   # entered the Route 31 ↔ Violet gatehouse (the building-door chokepoint)
+    VIOLET_CITY:      2.0,   # reached Violet City
+    GYM_MAP:          2.0,   # reached the gym
+}
+
 
 def _event_score(ram_state):
     """Weighted, monotonic score of LATCHED story flags (safe for delta-of-max).
@@ -66,13 +90,14 @@ def _event_score(ram_state):
     """
     s = 0.0
     if ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT:  # egg received from Mr. Pokemon
-        s += 3.0
+        s += 8.0
     if ram_state["flag_elm_mr_pokemon"] & ELM_BIT:         # egg delivered to Elm → OPENS THE GATE
-        s += 5.0
-    if ram_state["flag_violet_gym"] & TRAINER1_BIT:        # gym trainer 1 beaten
-        s += 1.0
-    if ram_state["flag_violet_gym"] & TRAINER2_BIT:        # gym trainer 2 beaten
-        s += 1.0
+        s += 12.0
+    # Per-trainer-beaten rewards: each win ≈ 250 tiles of income, exactly at the chokepoints
+    # where combat is mandatory (the direct fix for the learned total-battle-avoidance of
+    # crossing_wp / gymtest). Counts come from latched event flags → monotonic, delta-safe.
+    s += 5.0 * ram_state.get("route_trainers_beaten", 0)   # Joey, Mikey, Don (R30), Wade (R31)
+    s += 5.0 * ram_state.get("gym_trainers_beaten", 0)     # Bird Keepers Rod & Abe
     return s
 
 
@@ -102,10 +127,10 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
     exploration = 0.0
     penalties = 0.0
 
-    # ── Win condition (terminal pull; modest — discounting makes it ~invisible from start,
-    #    the dense exploration signal is what actually carries the agent to the gym)
+    # ── Win condition: must beat touring Violet City (~600 tiles = 12 pre-scale) BY ITSELF —
+    # the gymtest agent rationally walked out of the gym when the badge paid only 10.
     if ram_state["zephyr"]:
-        events += 10.0
+        events += 30.0
 
     # ── Exploration: dense per-new-tile bonus (EPISODE-scoped) — the primary navigation driver.
     # PPO_CNN_7 reverted the CNN_6 lifetime-novelty experiment: under pure single-start it saturated
@@ -121,15 +146,25 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
         if current_map not in visited_maps:
             exploration += 1.0
             visited_maps.add(current_map)
-        episode_maps.add(current_map)  # kept for compatibility; no reward attached
+        episode_maps.add(current_map)  # kept for compatibility
+        # Per-episode directional breadcrumb (CNN_8): modest +2 the first time each forward waypoint is
+        # reached THIS episode → a gradient through the map-door chokepoints the tile reward can't create.
+        if (reward_maxes is not None and current_map in WAYPOINT_REWARDS
+                and current_map not in reward_maxes["waypoints"]):
+            events += WAYPOINT_REWARDS[current_map]
+            reward_maxes["waypoints"].add(current_map)
 
     # ── Max-based progress rewards (need persistent per-episode running maxima)
     if reward_maxes is not None:
-        # Level reward: reward growth in the running max of summed party levels.
-        # Drives "get stronger" — necessary to beat Falkner (Pidgeotto lv9).
+        # Level reward with SATURATION (replaces the lead<=13 cap hack): full value while the summed
+        # party levels are <= 15, then 1/4 value beyond — 5→15 pays 10.0 (the levels needed for Falkner),
+        # 15→40 grinding pays only 6.25 TOTAL, so grinding self-extinguishes instead of hitting a cliff.
+        # (PWhiddy/puffer pattern: min(s, K + (s-K)/4).)
         level_sum = sum(ram_state["party_levels"])
         if level_sum > reward_maxes["level_sum"]:
-            events += 1.0 * (level_sum - reward_maxes["level_sum"])
+            scaled_new = min(level_sum, 15.0 + (level_sum - 15.0) / 4.0)
+            scaled_old = min(reward_maxes["level_sum"], 15.0 + (reward_maxes["level_sum"] - 15.0) / 4.0)
+            events += 1.0 * (scaled_new - scaled_old)
             reward_maxes["level_sum"] = level_sum
 
         # Opponent-level reward: reward facing progressively stronger opponents.
@@ -159,10 +194,11 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
 
         # Rival: latched falling edge of RIVAL_BIT — pays at most once per episode
         # (the bit rises again on leaving the area, so we must latch it ourselves).
+        # +3: a (near-)forced battle win on the optimal path — pro-combat signal.
         if (not reward_maxes["rival_done"]
                 and not (ram_state["flag_rival_cherrygrove"] & RIVAL_BIT)
                 and (prev_state["flag_rival_cherrygrove"] & RIVAL_BIT)):
-            events += 1.0
+            events += 3.0
             reward_maxes["rival_done"] = True
 
     # ── Healed outside battle (encourages Pokemon Center use before the gym)
@@ -174,12 +210,16 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
     if ram_state["hp_ratio"] <= 0 and ram_state["battle_type"] == 0:
         penalties -= 1.0
 
-    # NOTE (deferred to Phase 4 — battle competence vs Falkner):
-    #   - gym-only damage reward  (was: +10×Δenemy_hp at map (10,7))
-    #   - gym battle-exit reward  (was: +150 on battle falling-edge inside the gym)
-    # Intentionally omitted here so the Phase-3 navigation validation is clean.
-    # Removed for good: per-episode mega-waypoints, wild-battle penalty, flat step penalty,
-    # catch-pokemon bonus, big one-shot map milestones (see training_log.md "Ruled out").
+    # ── Gym damage reward (PPO_CNN_9 Phase-A gym validation): dense "deal damage to WIN" signal,
+    # MAP-CONSTRAINED to Falkner's gym so it cannot reward wild grinding (the PPO_16 lesson). Rewards
+    # reducing the enemy's HP (and KOs: a faint is a +1.0 HP drop) during a battle inside the gym.
+    if current_map == GYM_MAP and ram_state["battle_type"] > 0 and prev_state["battle_type"] > 0:
+        delta = prev_state["enemy_hp_ratio"] - ram_state["enemy_hp_ratio"]
+        if delta > 0:
+            events += 3.0 * delta
+
+    # Removed for good (see training_log.md "Ruled out"): per-episode mega-waypoints, global wild-battle
+    # penalty, flat step penalty, catch-pokemon bonus, big one-shot map milestones.
 
     events *= REWARD_SCALE
     exploration *= REWARD_SCALE
@@ -212,10 +252,14 @@ def make_reward_maxes(ram_state):
     Called by the env in reset() so the agent is NOT rewarded for its starting levels
     or for flags already set in the loaded save state. Mutated in place by compute_reward.
     """
+    start_map = (ram_state["map_bank"], ram_state["map_number"])
     return {
         "level_sum":      sum(ram_state["party_levels"]),
         "op_level":       0,
         "event_score":    _event_score(ram_state),
         "rival_done":     False,
         "mrpokemon_done": False,
+        # Pre-seed with the start map if it is itself a waypoint, so a stage that BEGINS on a waypoint
+        # doesn't reward re-entering it (only genuinely NEW forward waypoints pay).
+        "waypoints":      {start_map} if start_map in WAYPOINT_REWARDS else set(),
     }

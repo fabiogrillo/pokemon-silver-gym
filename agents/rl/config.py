@@ -6,7 +6,7 @@
 # Convention:
 #   - PPO_N      → MLP filone (PPO_1 .. PPO_18, closed 2026-06-03)
 #   - PPO_CNN_N  → CNN filone (restart from 1: PPO_CNN_1, PPO_CNN_2, ...)
-RUN_NAME = "PPO_CNN_8_stage1b"
+RUN_NAME = "PPO_CNN_10"
 
 # ENV
 ROM_PATH = "pokemon_rom.gbc"
@@ -43,26 +43,13 @@ MODEL_DIR = "runs/checkpoints/"  # Directory to save model checkpoints
 # ──────────────────────────────────────────────────────────────────────────
 N_ENVS_CNN = 12               # PyBoy CPU-bound (16 cores) — 12 envs improves throughput vs 8
 
-# ── PPO_CNN_8: REVERSE CURRICULUM for the egg-quest STORY GATE ──────────────────────────────────
-# The wall at "Route 31" is a STORY GATE: two trainers block Route 30 north until the egg is delivered
-# to Elm (CNN_5/6/7 never did the quest → reward_events=0 → permanently blocked). Mixed curricula
-# segregate the policy (CNN_7: start-state policy forgot how to leave New Bark). So we train a REVERSE
-# CURRICULUM: start near the goal, move the start earlier each run, ONE start-state per run (no
-# within-run reward asymmetry → no segregation), warm-starting each run from the previous.
-#
-# Run the 3 stages IN ORDER, editing 3 lines each time — RUN_NAME (top of file), the single save below,
-# and INIT_FROM_CHECKPOINT (bottom of CNN section):
-#   Stage | RUN_NAME          | single save below                     | INIT_FROM_CHECKPOINT
-#   ------|-------------------|---------------------------------------|------------------------------------
-#   1     | PPO_CNN_8_stage1  | saves/egg_delivered.state (gate OPEN)  | PPO_CNN_5_final
-#   2     | PPO_CNN_8_stage2  | saves/mid_route30.state   (egg taken)  | PPO_CNN_8_stage1/..._final
-#   3     | PPO_CNN_8_stage3  | saves/start.state         (full quest) | PPO_CNN_8_stage2/..._final
-#
-# Promote to the next stage only when eval from that stage's save reaches the gym. All 12 envs share the
-# stage save, so nav/reach_* (counting all episodes) cleanly reflects this stage's start.
+# ── PPO_CNN_10: SINGLE-START redesign run ───────────────────────────────────────────────────────
+# Event-dominant reward (egg +8/+12, per-trainer +5, badge +30, level saturation) + story/combat
+# obs (egg bits, trainer counts, visited-mask channel). NO curriculum: mixed curricula segregate the
+# policy (CNN_4/CNN_7 lessons) and the redesign makes the full quest learnable from start.state.
 # (counts must sum to N_ENVS_CNN)
 CURRICULUM_STATES_CNN = [
-    ("saves/egg_delivered.state", 12),  # STAGE 1: post-gate navigation, New Bark → … → Violet Gym
+    ("saves/start.state", 12),  # full quest from New Bark Town — the ONLY start
 ]
 
 # CNN hyperparameters (Atari-style defaults adapted for Pokemon)
@@ -72,13 +59,22 @@ BATCH_SIZE_CNN    = 512       # bigger minibatch, exploits GPU
 N_EPOCHS_CNN      = 4         # fewer epochs (more data per rollout)
 ENT_COEF_CNN      = 0.03      # Atari-like exploration; CNN sees the path so less needed
 
-TOTAL_TIMESTEPS_CNN = 30_000_000    # ~3h per reverse-curriculum stage. Watch nav/reach_route31
-                                    # (= gate cleared) and custom/reward_events (egg quest firing).
-CHECKPOINT_FREQ_CNN = 3_000_000     # in TIMESTEPS — train_cnn divides by N_ENVS for the SB3 callback
+TOTAL_TIMESTEPS_CNN = 150_000_000   # PPO_CNN_10 long-run budget (~18h @ ~2250fps). PWhiddy needed ~100M
+                                    # for Brock. GO/NO-GO GATES (TensorBoard, abort early if dead):
+                                    #   10M: nav/reach_cherrygrove ≥ 0.8 AND nav/egg_received_rate > 0 rising
+                                    #   25M: nav/egg_delivered_rate ≥ 0.3, nav/reach_route31 > 0.1
+                                    #        (if flat-zero at 40M: abort → delivery +12→+20)
+                                    #   50M: nav/reach_violet ≥ 0.3, custom/in_battle ∈ [0.05, 0.3];
+                                    #        offline eval 10 eps on the 50M checkpoint
+                                    #  100M: nav/badge_rate > 0 (else if reach_gym > 0.3: bump gym damage
+                                    #        3→5 and badge 30→50, warm-restart from the 100M checkpoint)
+CHECKPOINT_FREQ_CNN = 5_000_000     # in TIMESTEPS — train_cnn divides by N_ENVS for the SB3 callback
                                     # (CNN_5 bug: save_freq is counted in callback-calls = timesteps/n_envs,
                                     #  so the raw 5M×12=60M never fired → no intermediate checkpoints).
 
 # Warm-start for the REVERSE CURRICULUM: each stage fine-tunes from the PREVIOUS stage's *_final.zip.
 # Stage 1 starts from PPO_CNN_5_final (already knows New Bark → Cherrygrove → the gate area).
 # UPDATE this line between stages (see the table above). Set to None for a cold start.
-INIT_FROM_CHECKPOINT = "runs/checkpoints/PPO_CNN_5/PPO_CNN_5_final.zip"
+INIT_FROM_CHECKPOINT = None   # PPO_CNN_10 = new obs shapes (image 72×80×4, vector 11) → incompatible
+                              # with ALL previous checkpoints, COLD start. The 100M-gate warm-restart
+                              # (reward-only tweak, same obs) CAN reuse PPO_CNN_10 checkpoints.

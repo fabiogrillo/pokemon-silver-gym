@@ -62,9 +62,26 @@ class RAMReader:
         # 0xD7BA bit 7 (0x80): set to 1 during Elm lab sequence (egg/police/pokeball)
         flag_elm_mr_pokemon    = self.pyboy.memory[0xD7BA]
         # 0xD836: Violet City Gym trainer beaten flags (empirically verified via test_enemy_level.py)
-        # bit 4 (0x10): RISE after Trainer 1 beaten (flag #1020)
-        # bit 3 (0x08): RISE after Trainer 2 beaten (flag #1019)
+        # bit 4 (0x10): RISE after Trainer 1 beaten (flag #1020 = EVENT_BEAT_BIRD_KEEPER_ABE)
+        # bit 3 (0x08): RISE after Trainer 2 beaten (flag #1019 = EVENT_BEAT_BIRD_KEEPER_ROD)
         flag_violet_gym        = self.pyboy.memory[0xD836]
+        gym_trainers_beaten    = ((flag_violet_gym >> 3) & 1) + ((flag_violet_gym >> 4) & 1)
+
+        # ── Route 30/31 trainer beaten flags (pret/pokegold event_flags.asm, formula
+        # addr = 0xD7B7 + idx//8, bit = idx%8 — validated against 5 known anchors and
+        # cross-checked 2026-06-11 by diffing egg_delivered.state vs crossing.state vs violet_city.state)
+        # 0xD85E bit 0: EVENT_BEAT_BUG_CATCHER_DON   (#1336, Route 30)
+        # 0xD85E bit 3: EVENT_BEAT_BUG_CATCHER_WADE  (#1339, Route 31)
+        # 0xD86C bit 1: EVENT_BEAT_YOUNGSTER_JOEY    (#1449, Route 30)
+        # 0xD86C bit 2: EVENT_BEAT_YOUNGSTER_MIKEY   (#1450, Route 30)
+        flag_route_trainers_a = self.pyboy.memory[0xD85E]
+        flag_route_trainers_b = self.pyboy.memory[0xD86C]
+        route_trainers_beaten = (
+            (flag_route_trainers_a & 1)
+            + ((flag_route_trainers_a >> 3) & 1)
+            + ((flag_route_trainers_b >> 1) & 1)
+            + ((flag_route_trainers_b >> 2) & 1)
+        )
 
         # ── Enemy Pokemon (valid only when battle_type > 0)
         # Source: DataCrystal — https://datacrystal.tcrf.net/wiki/Pokémon_Gold_and_Silver/RAM_map
@@ -95,6 +112,8 @@ class RAMReader:
             "flag_rival_cherrygrove": flag_rival_cherrygrove,
             "flag_elm_mr_pokemon": flag_elm_mr_pokemon,
             "flag_violet_gym": flag_violet_gym,
+            "gym_trainers_beaten": gym_trainers_beaten,
+            "route_trainers_beaten": route_trainers_beaten,
             "lead_level": lead_level,
             "party_levels": party_levels,
             "enemy_lead_level": enemy_lead_level,

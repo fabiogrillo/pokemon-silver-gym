@@ -2,8 +2,8 @@
 CnnPolicy training entry point — PPO_19 and beyond.
 
 Differences from train_mlp.py:
-  - Imports PokemonEnvCNN (screen-based observation, 72x80x3 uint8)
-  - Uses VecFrameStack(n_stack=4) so policy sees motion across frames
+  - Imports PokemonEnvCNN (Dict obs: image 72x80x4 uint8 [RGB + visited mask] + 11-float vector)
+  - Uses VecFrameStack(n_stack=4) so policy sees motion across frames (image → 16 channels)
   - VecTransposeImage moves channels-last (HWC) → channels-first (CHW) for PyTorch
   - "CnnPolicy" instead of "MlpPolicy" — SB3 picks NatureCNN automatically
   - device="cuda" (CNN forward must run on GPU)
@@ -56,6 +56,11 @@ class InfoLoggerCallback(BaseCallback):
     """
 
     WAYPOINT_NAMES = ["cherrygrove", "route30_gate", "route31", "violet", "gym"]
+    # Episode-end story/combat progress (PPO_CNN_10 go/no-go gate metrics):
+    #   *_rate  = fraction of finished episodes where the bool flag was set
+    #   *_mean  = mean count over finished episodes
+    EP_RATE_KEYS  = ["egg_received", "egg_delivered", "zephyr"]
+    EP_MEAN_KEYS  = ["route_trainers_beaten", "gym_trainers_beaten"]
 
     def __init__(self):
         super().__init__()
@@ -63,6 +68,7 @@ class InfoLoggerCallback(BaseCallback):
                       "visited_tiles", "hp_ratio", "in_battle"]
         self._buffers = {k: [] for k in self._keys}
         self._ep_waypoints = []  # furthest waypoint of each episode that finished this rollout
+        self._ep_flags = {k: [] for k in self.EP_RATE_KEYS + self.EP_MEAN_KEYS}
 
     def _on_step(self) -> bool:
         for info in self.locals["infos"]:
@@ -71,10 +77,13 @@ class InfoLoggerCallback(BaseCallback):
                     self._buffers[k].append(info[k])
         # On episode end, SB3 keeps THIS step's info as infos[i] → its max_waypoint is the
         # episode's furthest point. Record it once per finished episode (un-dwell-confounded).
-        # Single start-state per run (reverse curriculum) → counting all episodes is clean.
+        # Single start-state per run → counting all episodes is clean.
         for info, done in zip(self.locals["infos"], self.locals["dones"]):
             if done and "max_waypoint" in info:
                 self._ep_waypoints.append(info["max_waypoint"])
+                for k in self._ep_flags:
+                    if k in info:
+                        self._ep_flags[k].append(float(info[k]))
         return True
 
     def _on_rollout_end(self) -> None:
@@ -88,7 +97,16 @@ class InfoLoggerCallback(BaseCallback):
             self.logger.record("nav/ep_max_waypoint", float(wp.mean()))
             for ordinal, name in enumerate(self.WAYPOINT_NAMES, start=1):
                 self.logger.record(f"nav/reach_{name}", float((wp >= ordinal).mean()))
+            for k in self.EP_RATE_KEYS:
+                if self._ep_flags[k]:
+                    name = "badge_rate" if k == "zephyr" else f"{k}_rate"
+                    self.logger.record(f"nav/{name}", float(np.mean(self._ep_flags[k])))
+            for k in self.EP_MEAN_KEYS:
+                if self._ep_flags[k]:
+                    self.logger.record(f"nav/{k.replace('_beaten', '')}_mean",
+                                       float(np.mean(self._ep_flags[k])))
         self._ep_waypoints = []
+        self._ep_flags = {k: [] for k in self.EP_RATE_KEYS + self.EP_MEAN_KEYS}
 
 
 def make_env(rank, state_path):
@@ -118,8 +136,8 @@ if __name__ == "__main__":
     # ── Vec wrappers stack (order matters!)
     vec_env = SubprocVecEnv(env_fns)
     vec_env = VecMonitor(vec_env)
-    vec_env = VecFrameStack(vec_env, n_stack=4)           # (72,80,3) → (72,80,12)
-    vec_env = VecTransposeImage(vec_env)                  # → (12,72,80) for PyTorch
+    vec_env = VecFrameStack(vec_env, n_stack=4)           # image (72,80,4) → (72,80,16)
+    vec_env = VecTransposeImage(vec_env)                  # → (16,72,80) for PyTorch
     # norm_reward=False (PPO_CNN_5): the Phase-1 realignment already keeps every reward term
     # single-digit (×REWARD_SCALE), so reward normalization is unnecessary — and harmful before,
     # because the running-std was dominated by rare +1000 spikes, crushing the dense exploration
@@ -142,7 +160,7 @@ if __name__ == "__main__":
         else:
             print("[init] Training from scratch (no warm-start checkpoint set)")
         model = PPO(
-            "CnnPolicy", vec_env, verbose=1,
+            "MultiInputPolicy", vec_env, verbose=1,   # Dict obs (image + state vector) → CombinedExtractor
             learning_rate=config.LEARNING_RATE_CNN,
             clip_range=0.1,
             n_steps=config.N_STEPS_CNN,

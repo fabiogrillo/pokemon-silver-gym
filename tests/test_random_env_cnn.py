@@ -2,7 +2,7 @@
 Sanity check for PokemonEnvCNN.
 
 What this verifies (no training involved):
-  - reset() returns obs with correct shape (72, 80, 3) and dtype uint8
+  - reset() returns Dict obs: image (72, 80, 4) uint8 [RGB + visited mask] + vector (11,) in [0,1]
   - obs values are in [0, 255] (no float leakage, no negative values)
   - step() runs 1000 random actions without crashing
   - reward components are finite floats, info dict has expected keys
@@ -21,12 +21,26 @@ ROM_PATH   = "pokemon_rom.gbc"
 STATE_PATH = "saves/start.state"
 N_STEPS    = 1000
 
-EXPECTED_OBS_SHAPE = (72, 80, 3)
+EXPECTED_OBS_SHAPE = (72, 80, 4)
 EXPECTED_OBS_DTYPE = np.uint8
 EXPECTED_INFO_KEYS = {
     "reward_exploration", "reward_events", "reward_penalties",
     "visited_tiles", "hp_ratio", "map_number", "in_battle",
 }
+
+
+def _check_obs(obs, where):
+    """Validate the Dict observation (PPO_CNN_10: image [RGB + visited mask] + state vector)."""
+    assert isinstance(obs, dict) and set(obs) == {"image", "vector"}, f"{where}: obs not Dict(image,vector)"
+    img, vec = obs["image"], obs["vector"]
+    assert img.shape == EXPECTED_OBS_SHAPE and img.dtype == np.uint8, f"{where}: image {img.shape} {img.dtype}"
+    assert 0 <= img.min() and img.max() <= 255, f"{where}: image range [{img.min()},{img.max()}]"
+    assert vec.shape == (11,) and 0.0 <= vec.min() and vec.max() <= 1.0, f"{where}: vector {vec.shape}"
+    # Visited mask: must contain only 0/255, and the player's own metatile (rows 32:40, cols 32:40)
+    # must always be marked visited (the agent is standing on it).
+    mask = img[:, :, 3]
+    assert set(np.unique(mask)) <= {0, 255}, f"{where}: mask has non-binary values"
+    assert mask[32:40, 32:40].min() == 255, f"{where}: player's own tile not marked visited in mask"
 
 
 def main():
@@ -39,10 +53,8 @@ def main():
 
         # ── Reset
         obs, info = env.reset()
-        assert obs.shape == EXPECTED_OBS_SHAPE, f"reset obs shape {obs.shape} != {EXPECTED_OBS_SHAPE}"
-        assert obs.dtype == EXPECTED_OBS_DTYPE, f"reset obs dtype {obs.dtype} != {EXPECTED_OBS_DTYPE}"
-        assert obs.min() >= 0 and obs.max() <= 255, f"reset obs out of range: [{obs.min()}, {obs.max()}]"
-        print(f"[OK] reset → obs {obs.shape} {obs.dtype} range [{obs.min()}, {obs.max()}]")
+        _check_obs(obs, "reset")
+        print(f"[OK] reset → image {obs['image'].shape} {obs['image'].dtype}, vector {obs['vector'].round(3)}")
 
         # ── Loop random actions
         total_reward = 0.0
@@ -54,8 +66,7 @@ def main():
             obs, reward, terminated, truncated, info = env.step(action)
 
             # Per-step invariants (run on EVERY step — cheap)
-            assert obs.shape == EXPECTED_OBS_SHAPE, f"step {step} obs shape wrong: {obs.shape}"
-            assert obs.dtype == EXPECTED_OBS_DTYPE, f"step {step} obs dtype wrong: {obs.dtype}"
+            _check_obs(obs, f"step {step}")
             assert np.isfinite(reward), f"step {step} reward not finite: {reward}"
             assert EXPECTED_INFO_KEYS.issubset(info.keys()), \
                 f"step {step} info missing keys: {EXPECTED_INFO_KEYS - info.keys()}"
