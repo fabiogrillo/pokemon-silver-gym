@@ -130,4 +130,4 @@ while pyboy.tick(1):
 pyboy.stop()
 log(f"\nSession ended. Total simulated reward: {total_reward:+.1f}")
 _logfile.close()
-print(f"\nLog completo salvato in: {LOG_PATH}")
+print(f"\nFull log saved to: {LOG_PATH}")

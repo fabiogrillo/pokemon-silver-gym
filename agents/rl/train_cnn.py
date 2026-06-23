@@ -39,20 +39,14 @@ def get_device():
 
 
 class InfoLoggerCallback(BaseCallback):
-    """Logs custom metrics to TensorBoard at each rollout.
+    """Log custom metrics to TensorBoard each rollout.
 
-    Two kinds of metric:
-      - per-STEP means (reward components, tiles, hp, battle): averaged over every step.
-      - per-EPISODE navigation progress: recorded ONLY when an episode ends (done), so it is
-        NOT confounded by how long the agent dwells in a map. `max_waypoint` is a monotonic
-        ordinal 0..5 (0=start, 1=Cherrygrove, 2=Route30-gate, 3=Route31 POST-GATE, 4=Violet, 5=Gym).
-        We log the mean furthest point reached AND the fraction of episodes that reached each
-        waypoint. `nav/reach_route31` is the key signal: reaching post-gate Route 31 means the agent
-        cleared the two-trainer STORY GATE (only possible after delivering the egg to Elm).
-
-        NOTE (PPO_CNN_8): the reverse curriculum uses a SINGLE start-state per run, so we count
-        ALL finished episodes — the metric cleanly reflects that stage's start. (The CNN_7
-        from_start filter is no longer needed: there is no mixed curriculum to contaminate it.)
+    - per-STEP means (reward components, tiles, hp, battle): averaged over every step.
+    - per-EPISODE nav progress: recorded only on episode end, so it is NOT confounded by dwell
+      time. `max_waypoint` is a monotonic ordinal 0..5 (0=start, 1=Cherrygrove, 2=Route30-gate,
+      3=Route31 POST-GATE, 4=Violet, 5=Gym). Logs the mean furthest point AND the per-waypoint
+      reach fraction. `nav/reach_route31` is the key signal: post-gate Route 31 means the
+      two-trainer STORY GATE is cleared (only possible after the egg is delivered to Elm).
     """
 
     WAYPOINT_NAMES = ["cherrygrove", "route30_gate", "route31", "violet", "gym"]
@@ -60,15 +54,21 @@ class InfoLoggerCallback(BaseCallback):
     #   *_rate  = fraction of finished episodes where the bool flag was set
     #   *_mean  = mean count over finished episodes
     EP_RATE_KEYS  = ["egg_received", "egg_delivered", "zephyr"]
-    EP_MEAN_KEYS  = ["route_trainers_beaten", "gym_trainers_beaten"]
+    EP_MEAN_KEYS  = ["route_trainers_beaten", "gym_trainers_beaten",
+                     "battles_won", "battles_fled", "battles_lost", "return_progress"]
 
     def __init__(self):
         super().__init__()
         self._keys = ["reward_exploration", "reward_events", "reward_penalties",
                       "visited_tiles", "hp_ratio", "in_battle"]
         self._buffers = {k: [] for k in self._keys}
-        self._ep_waypoints = []  # furthest waypoint of each episode that finished this rollout
-        self._ep_flags = {k: [] for k in self.EP_RATE_KEYS + self.EP_MEAN_KEYS}
+        # Episode-end stats split by origin: "nav" = true start.state episodes (the SUCCESS GATE),
+        # "front" = Go-Explore frontier-reset episodes (agent_059), which begin deep along the
+        # policy's own trajectory. Without the split, frontier episodes (which start past the
+        # waypoints) would inflate the start-state metrics and hide regressions (the CNN_7 lesson).
+        self._ep_waypoints = {"nav": [], "front": []}
+        self._ep_flags = {p: {k: [] for k in self.EP_RATE_KEYS + self.EP_MEAN_KEYS}
+                          for p in ("nav", "front")}
 
     def _on_step(self) -> bool:
         for info in self.locals["infos"]:
@@ -77,13 +77,13 @@ class InfoLoggerCallback(BaseCallback):
                     self._buffers[k].append(info[k])
         # On episode end, SB3 keeps THIS step's info as infos[i] → its max_waypoint is the
         # episode's furthest point. Record it once per finished episode (un-dwell-confounded).
-        # Single start-state per run → counting all episodes is clean.
         for info, done in zip(self.locals["infos"], self.locals["dones"]):
             if done and "max_waypoint" in info:
-                self._ep_waypoints.append(info["max_waypoint"])
-                for k in self._ep_flags:
+                prefix = "nav" if info.get("from_start", True) else "front"
+                self._ep_waypoints[prefix].append(info["max_waypoint"])
+                for k in self._ep_flags[prefix]:
                     if k in info:
-                        self._ep_flags[k].append(float(info[k]))
+                        self._ep_flags[prefix][k].append(float(info[k]))
         return True
 
     def _on_rollout_end(self) -> None:
@@ -92,29 +92,66 @@ class InfoLoggerCallback(BaseCallback):
                 self.logger.record(f"custom/{k}", np.mean(values))
         self._buffers = {k: [] for k in self._keys}
 
-        if self._ep_waypoints:
-            wp = np.array(self._ep_waypoints)
-            self.logger.record("nav/ep_max_waypoint", float(wp.mean()))
-            for ordinal, name in enumerate(self.WAYPOINT_NAMES, start=1):
-                self.logger.record(f"nav/reach_{name}", float((wp >= ordinal).mean()))
-            for k in self.EP_RATE_KEYS:
-                if self._ep_flags[k]:
-                    name = "badge_rate" if k == "zephyr" else f"{k}_rate"
-                    self.logger.record(f"nav/{name}", float(np.mean(self._ep_flags[k])))
-            for k in self.EP_MEAN_KEYS:
-                if self._ep_flags[k]:
-                    self.logger.record(f"nav/{k.replace('_beaten', '')}_mean",
-                                       float(np.mean(self._ep_flags[k])))
-        self._ep_waypoints = []
-        self._ep_flags = {k: [] for k in self.EP_RATE_KEYS + self.EP_MEAN_KEYS}
+        for prefix in ("nav", "front"):
+            wps = self._ep_waypoints[prefix]
+            if wps:
+                wp = np.array(wps)
+                self.logger.record(f"{prefix}/ep_max_waypoint", float(wp.mean()))
+                for ordinal, name in enumerate(self.WAYPOINT_NAMES, start=1):
+                    self.logger.record(f"{prefix}/reach_{name}", float((wp >= ordinal).mean()))
+                for k in self.EP_RATE_KEYS:
+                    if self._ep_flags[prefix][k]:
+                        name = "badge_rate" if k == "zephyr" else f"{k}_rate"
+                        self.logger.record(f"{prefix}/{name}",
+                                           float(np.mean(self._ep_flags[prefix][k])))
+                for k in self.EP_MEAN_KEYS:
+                    if self._ep_flags[prefix][k]:
+                        self.logger.record(f"{prefix}/{k.replace('_beaten', '')}_mean",
+                                           float(np.mean(self._ep_flags[prefix][k])))
+        self._ep_waypoints = {"nav": [], "front": []}
+        self._ep_flags = {p: {k: [] for k in self.EP_RATE_KEYS + self.EP_MEAN_KEYS}
+                          for p in ("nav", "front")}
 
 
-def make_env(rank, state_path):
+class EntCoefScheduleCallback(BaseCallback):
+    """Linearly anneal ent_coef `start`→`end` over `anneal_steps`, then hold `end`.
+
+    agent_056 lever: a FIXED low ent_coef (0.01) can't learn new long-range behavior (delivery
+    A-press, southward backtrack), but a FIXED high one (0.03, agent_052) never locks segment 1.
+    The schedule explores high early, then commits low. SB3 reads model.ent_coef as a float each
+    train() call, so the per-rollout mutation applies on the next update (lr supports schedules
+    natively; ent_coef does not — hence this callback)."""
+
+    def __init__(self, start, end, anneal_steps):
+        super().__init__()
+        self.start, self.end, self.anneal_steps = start, end, anneal_steps
+
+    def _on_rollout_start(self) -> None:
+        progress = min(1.0, self.num_timesteps / self.anneal_steps)
+        self.model.ent_coef = self.start + (self.end - self.start) * progress
+        self.logger.record("train/ent_coef_sched", self.model.ent_coef)
+
+    def _on_step(self) -> bool:
+        return True
+
+
+def make_env(rank, state_path, frontier_root=None, p_frontier=0.0):
     def _init():
         env = PokemonEnvCNN(
             config.ROM_PATH, state_path, headless=True,
             gif_dir=None,  # no GIFs during training (saves disk space and overhead)
             gif_prefix=config.RUN_NAME,  # ensures GIF filenames carry the run identity
+            # Every worker points its FrontierArchive at the SAME dir → frontier cells are shared
+            # across SubprocVecEnv processes via the filesystem (no IPC). agent_060: p_frontier is
+            # assigned PER ENV (dedicated frontier envs) — see __main__ — not a global flag.
+            frontier_root=frontier_root,
+            p_frontier=p_frontier if frontier_root else 0.0,
+            frontier_max_cells=config.FRONTIER_MAX_CELLS,
+            frontier_cell_k=config.FRONTIER_CELL_K,
+            frontier_epsilon=config.FRONTIER_EPSILON,
+            frontier_max_steps=getattr(config, "FRONTIER_MAX_STEPS", 2**16),
+            egg_marker=getattr(config, "EGG_MARKER", False),  # agent_066: egg-state visual marker
+            exploration_scale=getattr(config, "EXPLORATION_SCALE", 1.0),  # agent_071: 0 in Phase-2 gym runs
         )
         env.reset(seed=rank)
         return env
@@ -125,12 +162,50 @@ if __name__ == "__main__":
     device = get_device()
     assert sum(n for _, n in config.CURRICULUM_STATES_CNN) == config.N_ENVS_CNN, \
         f"CURRICULUM_STATES_CNN counts must sum to N_ENVS_CNN ({config.N_ENVS_CNN})"
+    # Fail fast on a missing save state — PyBoyWrapper only WARNS and silently starts a fresh game,
+    # which would train from the wrong scene (e.g. agent_076 needs saves/egg_delivered_clean.state,
+    # created manually via `python tests/save_state.py egg_delivered_clean before_elm_delivery`).
+    for state_path, _ in config.CURRICULUM_STATES_CNN:
+        if not os.path.exists(state_path):
+            sys.exit(f"[init] Missing save state: {state_path}\n"
+                     f"       Create it first (see README / Part A) before training.")
 
+    # agent_059: prepare the shared frontier archive dir (one per run). Clear it at startup so a run
+    # never samples stale cells left by a DIFFERENT policy (those would be off-distribution).
+    frontier_root = None
+    if getattr(config, "FRONTIER_ENABLED", False):
+        import shutil
+        frontier_root = os.path.join(config.FRONTIER_ROOT, config.RUN_NAME)
+        shutil.rmtree(frontier_root, ignore_errors=True)
+        os.makedirs(frontier_root, exist_ok=True)
+        # agent_067: optionally SEED the archive with another run's carry-state save-states, to bootstrap
+        # a cold start that can't reach those states on its own (the pure-start-cold wall, 066).
+        seed_from = getattr(config, "FRONTIER_SEED_FROM", None)
+        if seed_from and os.path.isdir(seed_from):
+            import glob as _glob
+            seeded = 0
+            for src in _glob.glob(os.path.join(seed_from, "*.state")):
+                shutil.copy(src, frontier_root)
+                seeded += 1
+            print(f"[frontier] SEEDED {seeded} cells from {seed_from}")
+        print(f"[frontier] Go-Explore reset ENABLED — shared archive at {frontier_root} "
+              f"(frontier_envs={config.FRONTIER_N_ENVS}/{config.N_ENVS_CNN}, p={config.FRONTIER_P}, "
+              f"max_cells={config.FRONTIER_MAX_CELLS}, k={config.FRONTIER_CELL_K})")
+
+    # agent_060: DEDICATE the last FRONTIER_N_ENVS envs to frontier resets (p=FRONTIER_P); the rest
+    # are PURE start (p=0). 059 (p=0.5 on ALL 12 envs) let the southward frontier gradient suppress
+    # the NORTHWARD egg-pickup excursion → nav/egg_received cratered 1.0→0 (pickup is the foundation;
+    # 0 pickup structurally caps delivery at 0). Keeping a majority of envs pure-start guarantees the
+    # full start→pickup→deliver task keeps being reinforced at strength while a minority deepens the
+    # archive. The archive is still SHARED, so the frontier practice transfers to the start envs.
+    n_frontier = config.FRONTIER_N_ENVS if frontier_root else 0
+    n_start = config.N_ENVS_CNN - n_frontier
     env_fns = []
     rank = 0
     for state_path, n in config.CURRICULUM_STATES_CNN:
         for _ in range(n):
-            env_fns.append(make_env(rank, state_path))
+            p = config.FRONTIER_P if rank >= n_start else 0.0   # last n_frontier envs are frontier
+            env_fns.append(make_env(rank, state_path, frontier_root, p))
             rank += 1
 
     # ── Vec wrappers stack (order matters!)
@@ -138,10 +213,9 @@ if __name__ == "__main__":
     vec_env = VecMonitor(vec_env)
     vec_env = VecFrameStack(vec_env, n_stack=4)           # image (72,80,4) → (72,80,16)
     vec_env = VecTransposeImage(vec_env)                  # → (16,72,80) for PyTorch
-    # norm_reward=False (PPO_CNN_5): the Phase-1 realignment already keeps every reward term
-    # single-digit (×REWARD_SCALE), so reward normalization is unnecessary — and harmful before,
-    # because the running-std was dominated by rare +1000 spikes, crushing the dense exploration
-    # signal toward zero. Matches Whidden V2 (raw, well-scaled rewards).
+    # norm_reward=False (PPO_CNN_5): rewards are already single-digit (×REWARD_SCALE), so
+    # normalization is unnecessary — and was harmful before, when rare +1000 spikes dominated the
+    # running-std and crushed the dense exploration signal. Matches Whidden V2 (raw, well-scaled).
     vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=False,
                            clip_obs=10.0, gamma=config.GAMMA)
 
@@ -153,7 +227,16 @@ if __name__ == "__main__":
         model = PPO.load(
             config.INIT_FROM_CHECKPOINT, env=vec_env, device=device,
             tensorboard_log=config.LOG_DIR,
+            # PPO.load restores the checkpoint's lr AND ent_coef — override both with the
+            # config values so warm-starts can run with different optimizer settings.
+            custom_objects={
+                "learning_rate": config.LEARNING_RATE_CNN,
+                "lr_schedule": (lambda _: config.LEARNING_RATE_CNN),
+                "ent_coef": config.ENT_COEF_CNN,
+            },
         )
+        print(f"[init] learning_rate overridden to {config.LEARNING_RATE_CNN}, "
+              f"ent_coef to {config.ENT_COEF_CNN}")
     else:
         if config.INIT_FROM_CHECKPOINT:
             print(f"[init] WARNING: {config.INIT_FROM_CHECKPOINT} not found — training from scratch")
@@ -183,6 +266,13 @@ if __name__ == "__main__":
             name_prefix=config.RUN_NAME,
         ),
         InfoLoggerCallback(),
+        # agent_056: entropy schedule (explore high → commit low). Overrides the static
+        # ENT_COEF_CNN/custom_objects value from rollout 1 onward.
+        EntCoefScheduleCallback(
+            start=config.ENT_COEF_CNN,
+            end=config.ENT_COEF_CNN_END,
+            anneal_steps=config.ENT_ANNEAL_STEPS_CNN,
+        ),
     ]
     model.learn(
         total_timesteps=config.TOTAL_TIMESTEPS_CNN,

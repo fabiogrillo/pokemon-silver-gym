@@ -3,10 +3,7 @@ class RAMReader:
         self.pyboy = pyboy_instance
     
     def read_all(self):
-        """
-        Return all desired RAM values as a dictionary. 
-        This is the main method that will be called by the environment's step() and reset() methods.
-        """
+        """Return all tracked RAM values as a dict. Called by the env step() and reset()."""
         # ── Global position (world coords — useful for debug, not used for tile tracking)
         x = self.pyboy.memory[0xD20D]
         y = self.pyboy.memory[0xD20E]
@@ -25,8 +22,6 @@ class RAMReader:
         zephyr      = bool(badges & 0x01)  # our win condition
 
         # ── Battle type: 0=overworld | 1=wild | 2=trainer | 3=gym  (VERIFY empirically)
-        # Knowing the type lets the agent decide: run from wild battles to save steps,
-        # fight trainer/gym battles for the large reward bonus.
         battle_type = self.pyboy.memory[0xD116]
 
         # ── Party count

@@ -58,6 +58,9 @@ TRAINER2_BIT    = 0x08  # 0xD836 bit 3 — Violet City Gym Trainer 2 beaten (lat
 # ── Map IDs (bank, number) — RE-VERIFIED 2026-06-10 by walking the full route with save_state.py.
 # The egg quest is the gate key: two trainers block Route 30 north (ROUTE_30_GATE) until the egg is
 # delivered to Elm; only then can the agent pass (26,1)→(26,2) and continue toward Violet.
+NEW_BARK         = (24, 4)   # New Bark Town (start)
+ELM_LAB          = (24, 5)   # Prof. Elm's lab (egg delivery target)
+ROUTE_29         = (24, 3)   # Route 29 (New Bark ↔ Cherrygrove)
 CHERRYGROVE      = (26, 3)   # Cherrygrove City
 MR_POKEMON_HOUSE = (26, 10)  # egg pickup (pre-gate, a detour off Route 30)
 ROUTE_30_GATE    = (26, 1)   # Route 30 north — holds the two-trainer STORY GATE (where CNN_5/6/7 stalled)
@@ -66,6 +69,10 @@ DARK_CAVE        = (3, 70)   # dead-end without Flash — off-path exploration s
 VIOLET_GATEHOUSE = (26, 11)  # gate house between Route 31 and Violet City
 VIOLET_CITY      = (10, 5)   # Violet City main
 GYM_MAP          = (10, 7)   # Violet City Gym (Falkner)
+
+# agent_065: the SOUTHERN DELIVERY CORRIDOR (Cherrygrove → Route29 → NewBark → Elm). Used for the dense
+# per-tile southward-carry pull (see compute_reward) — the fix for the carry-NAVIGATION wall (ESCALATION #3).
+SOUTH_CORRIDOR = {CHERRYGROVE, ROUTE_29, NEW_BARK, ELM_LAB}
 
 # Per-episode forward waypoints — modest directional breadcrumbs that pull the policy through the
 # map-door chokepoints (the flat per-tile reward gives no gradient toward a specific exit/door tile).
@@ -76,6 +83,33 @@ WAYPOINT_REWARDS = {
     VIOLET_GATEHOUSE: 2.0,   # entered the Route 31 ↔ Violet gatehouse (the building-door chokepoint)
     VIOLET_CITY:      2.0,   # reached Violet City
     GYM_MAP:          2.0,   # reached the gym
+}
+
+# Return-leg breadcrumbs (PPO_CNN_10b): per-episode latched map-entry bonuses, paid ONLY while
+# carrying the undelivered egg. PPO_CNN_10 @41M: egg pickup oscillated at 3-5% but delivery stayed
+# flat ZERO — the ~600-step backtrack crosses already-visited tiles paying nothing, so the delivery
+# event was never even EXPERIENCED and could not enter the gradient. These factorize the backtrack
+# into learnable sub-goals. The egg gating makes cycling impossible: they pay nothing before pickup
+# and nothing after delivery.
+# Return-leg breadcrumbs (PPO_CNN_10g): per-episode LATCHED map-entry bonuses paid ONLY while
+# carrying the undelivered egg — the FULL southward chain, positives only.
+# History: 10e parked in Mr.Pokemon's house post-pickup (reward-ghost attractor). 10f tried
+# POTENTIAL-BASED shaping (south +1 / north −1) — unhackable within the carrying state, but the
+# agent dodged the state itself: pickup rate collapsed 0.87→0.27 because its north-dwelling habit
+# bled −0.1 per transition, and skipping the egg ended the bleed. Lesson: NEVER put negatives on
+# a state the agent can simply avoid entering. Latched positives have no bleed (pickup stays
+# strictly profitable), no cycling (latched), and pay on every southward first-entry.
+# NOTE (agent_064, RULED OUT): scaling these into a STRONG southward staircase (2/5/12/20/30) FAILED — it
+# destabilized the value fn (norm_reward=False; +30 spikes) and didn't cross the barren gap (sparse map-entry
+# bonuses sit BEYOND the gap, no gradient ACROSS it). front/return_progress DECLINED, pickup eroded. The real
+# wall (carry-NAVIGATION south vs an entrenched northward HABIT) is an exploration problem, not a reward-
+# magnitude one — see training_log.md "ESCALATION #3". Reverted to the modest original values.
+RETURN_BREADCRUMBS = {
+    ROUTE_30_GATE: 1.0,  # out of the house pocket, heading south
+    CHERRYGROVE:   2.0,  # back south through Route 30
+    ROUTE_29:      3.0,  # the front reached Cherry then turned back — modest pull on the links
+    NEW_BARK:      3.0,
+    ELM_LAB:       2.0,  # at the delivery doorstep
 }
 
 
@@ -92,7 +126,7 @@ def _event_score(ram_state):
     if ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT:  # egg received from Mr. Pokemon
         s += 8.0
     if ram_state["flag_elm_mr_pokemon"] & ELM_BIT:         # egg delivered to Elm → OPENS THE GATE
-        s += 12.0
+        s += 30.0                                          # 12→20→30 (10k: thunderclap when it lands)
     # Per-trainer-beaten rewards: each win ≈ 250 tiles of income, exactly at the chokepoints
     # where combat is mandatory (the direct fix for the learned total-battle-avoidance of
     # crossing_wp / gymtest). Counts come from latched event flags → monotonic, delta-safe.
@@ -102,7 +136,7 @@ def _event_score(ram_state):
 
 
 def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
-                   reward_maxes=None, new_tile_lifetime=False):
+                   reward_maxes=None, new_tile_lifetime=False, exploration_scale=1.0):
     """
     Compute reward + breakdown given current RAM state and tracking sets.
 
@@ -142,6 +176,18 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
 
     # ── Lifetime map milestone: small one-shot bonus the first time any map is entered
     current_map = (ram_state["map_bank"], ram_state["map_number"])
+
+    # ── agent_065: DENSE SMALL southward-carry pull (the ESCALATION #3 fix for carry-NAVIGATION). +0.05 for
+    # each NEW (episode-scoped) tile visited while CARRYING the undelivered egg in the southern delivery
+    # corridor. This is a DENSE gradient that exists ACROSS the Cherrygrove→Route29 barren gap (vs 064's sparse
+    # map-entry bonuses BEYOND it), and SMALL so it can't destabilize the value fn (vs 064's +30 spikes). While
+    # carrying, going NORTH re-treads known tiles (+0); going SOUTH hits new corridor tiles (+0.02+0.05=0.07) →
+    # a clear southward gradient for PPO to shift the entrenched northward habit. Positive-only + episode-latched
+    # (no pickup-dodge, no cycling; a finite map can't be milked).
+    carrying_egg_065 = ((ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT)
+                        and not (ram_state["flag_elm_mr_pokemon"] & ELM_BIT))
+    if new_tile and carrying_egg_065 and current_map in SOUTH_CORRIDOR:
+        exploration += 0.05
     if current_map != (prev_state["map_bank"], prev_state["map_number"]):
         if current_map not in visited_maps:
             exploration += 1.0
@@ -153,6 +199,15 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
                 and current_map not in reward_maxes["waypoints"]):
             events += WAYPOINT_REWARDS[current_map]
             reward_maxes["waypoints"].add(current_map)
+        # Return-leg breadcrumb (PPO_CNN_10b): fires on map ENTRY, only while carrying the
+        # undelivered egg, latched per episode — directional gradient for the Elm backtrack.
+        carrying_egg = ((ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT)
+                        and not (ram_state["flag_elm_mr_pokemon"] & ELM_BIT))
+        if (reward_maxes is not None and current_map in RETURN_BREADCRUMBS
+                and carrying_egg
+                and current_map not in reward_maxes["return_waypoints"]):
+            events += RETURN_BREADCRUMBS[current_map]
+            reward_maxes["return_waypoints"].add(current_map)
 
     # ── Max-based progress rewards (need persistent per-episode running maxima)
     if reward_maxes is not None:
@@ -201,14 +256,37 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
             events += 3.0
             reward_maxes["rival_done"] = True
 
+    # ── Battle WIN reward (PPO_CNN_10b eval finding): the agent learned hit-and-flee because
+    # battles paid NOTHING (they only block tile income) — it chip-damaged itself to blackout.
+    # +2.0 on the battle falling edge with the enemy VERIFIED at 0 HP (KO), nothing for fleeing.
+    # No flee penalty: every battle penalty in history (PPO_17/18) taught grass avoidance instead.
+    # Differs from the ruled-out flat +15 win reward (PPO_10): KO-verified, modest, and CAPPED at
+    # 10 wins/episode (max 2.0 post-scale ≈ 1/6 of the story chain) so grinding can't dominate.
+    # Win cap 10 → 5 → 2 (agent_052): the battle attractor kept capturing the start envs at the
+    # first grass (probe @051: 99% of time on Route 29, 14 wins + 28 flees / 10k steps, egg never
+    # taken). At cap 2 (0.4 post) battle income stops competing with the quest (~14 post) while the
+    # battle COMPETENCE stays in the weights for the gym.
+    if (reward_maxes is not None
+            and prev_state["battle_type"] > 0 and ram_state["battle_type"] == 0
+            and ram_state["hp_ratio"] > 0
+            and prev_state["enemy_hp_ratio"] <= 0
+            and reward_maxes["wins_rewarded"] < 2):
+        events += 2.0
+        reward_maxes["wins_rewarded"] += 1
+
     # ── Healed outside battle (encourages Pokemon Center use before the gym)
     if ram_state["hp_ratio"] - prev_state["hp_ratio"] > 0.4 and \
             ram_state["battle_type"] == 0:
         events += 2.0
 
-    # ── Death penalty: HP=0 in overworld (small — Whidden uses -0.1×died_count)
+    # ── Death penalty: HP=0 in overworld → episode ends. RAISED -1 → -8 (PPO_CNN_10d): at -1
+    # (-0.1 post) death was nearly free and RESET the win cap, creating the 10c "kamikaze grinder"
+    # loop — win 4-5 battles, die at 2.5k steps, respawn with a fresh win budget (ep_rew was RISING
+    # on that cycle). At -8 (-0.8 post ≈ 40% of the max win budget) survival out-earns suicide:
+    # +2.0 wins − 0.8 death < +2.0 wins + tiles + story chain alive. Also synergizes with the heal
+    # reward (+2 on big HP recovery outside battle).
     if ram_state["hp_ratio"] <= 0 and ram_state["battle_type"] == 0:
-        penalties -= 1.0
+        penalties -= 8.0
 
     # ── Gym damage reward (PPO_CNN_9 Phase-A gym validation): dense "deal damage to WIN" signal,
     # MAP-CONSTRAINED to Falkner's gym so it cannot reward wild grinding (the PPO_16 lesson). Rewards
@@ -222,7 +300,9 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
     # penalty, flat step penalty, catch-pokemon bonus, big one-shot map milestones.
 
     events *= REWARD_SCALE
-    exploration *= REWARD_SCALE
+    # agent_071 (Phase 2): exploration_scale=0 zeros the new-tile/new-map (and Phase-1 dense) reward so the
+    # agent has NO incentive to leave the gym for new tiles — the gym FIGHT (events) becomes the only income.
+    exploration *= REWARD_SCALE * exploration_scale
     penalties *= REWARD_SCALE
     total = events + exploration + penalties
     return total, {"events": events, "exploration": exploration, "penalties": penalties}
@@ -259,7 +339,16 @@ def make_reward_maxes(ram_state):
         "event_score":    _event_score(ram_state),
         "rival_done":     False,
         "mrpokemon_done": False,
+        "wins_rewarded":  0,
         # Pre-seed with the start map if it is itself a waypoint, so a stage that BEGINS on a waypoint
         # doesn't reward re-entering it (only genuinely NEW forward waypoints pay).
         "waypoints":      {start_map} if start_map in WAYPOINT_REWARDS else set(),
+        # Same pre-seed for return breadcrumbs, relevant only if a save starts egg-in-hand on one
+        # of these maps (e.g. before_elm_delivery.state inside the lab).
+        "return_waypoints": (
+            {start_map} if (start_map in RETURN_BREADCRUMBS
+                            and (ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT)
+                            and not (ram_state["flag_elm_mr_pokemon"] & ELM_BIT))
+            else set()
+        ),
     }

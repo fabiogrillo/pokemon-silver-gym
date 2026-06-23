@@ -1,21 +1,32 @@
 # Pokemon Silver Gym — RL Agent vs AI Agent
 
-A personal portfolio project exploring two fundamentally different approaches to playing **Pokemon Silver**: a **Reinforcement Learning agent** trained via PPO, and a **text-based AI agent** powered by a local LLM (Ollama). Both agents share the same game environment and compete for the same win condition: **earning the Zephyr Badge** from Gym Leader Falkner in Violet City.
+A personal portfolio project exploring two approaches to playing **Pokemon Silver**: a
+**Reinforcement Learning agent** (PPO) and a planned **text-based LLM agent** (local Ollama).
+Both share one game environment and one win condition: **earning the Zephyr Badge** from Gym
+Leader Falkner in Violet City.
 
-The goal is not just to play Pokemon — it's to understand, from the ground up, how RL training works, how an LLM-based agentic loop is built, and how to compare two fundamentally different AI approaches quantitatively. Every line of code is written by hand (GitHub Copilot for autocomplete only) to maximize learning.
+The goal is to understand, hands-on, how RL training works, how an LLM agentic loop is built,
+and how to compare the two quantitatively. Every line is written by hand (Copilot for
+autocomplete only) to maximize learning.
 
-> **Status**: Work in progress — Week 4 of a 4-week build.
+> **Status**: work in progress. The RL agent (CnnPolicy + frame stack) is the active line;
+> the LLM agent is planned. The RL line is currently on a **v2 re-baseline** (PWhiddy-style): a
+> single generalist trained from the *egg-delivered* state to navigate New Bark → Violet City and
+> beat Falkner — no backtracking — with an offline **map-visualization** overlay and a Dockerized
+> playback demo.
 
 ---
 
-## What This Project Demonstrates
+## What this project demonstrates
 
-- Building a custom **Gymnasium-compatible environment** from a Game Boy ROM using PyBoy
-- Reading and using **internal ROM memory** (RAM addresses) for game state extraction and reward shaping
-- Training a **PPO agent** (Stable Baselines3) with parallel environments and tracking training via TensorBoard
-- Implementing a **ReAct loop** with tool-calling using the OpenAI-compatible Ollama API
-- **Quantitative comparison** of RL vs LLM agent: badge rate, steps per episode, map exploration heatmaps
-- Full **Docker deployment** so anyone can reproduce the training and agent runs
+- A custom **Gymnasium environment** built from a Game Boy ROM via PyBoy
+- Reading **ROM RAM** (empirically verified addresses) for state extraction and reward shaping
+- Training a **PPO agent** (Stable Baselines3) with parallel environments and TensorBoard
+- **Map visualization** (PWhiddy-style): replay a checkpoint and overlay its trajectory + visitation
+  heatmap on a stitched map of the New Bark → Violet corridor (PNG + animated GIF)
+- **Dockerized playback**: run a pretrained agent from the egg-delivered state toward Falkner
+- (Planned) a **ReAct loop** with tool-calling over the OpenAI-compatible Ollama API
+- **Quantitative RL vs LLM comparison**: badge rate, steps/episode, exploration heatmaps
 
 ---
 
@@ -23,259 +34,153 @@ The goal is not just to play Pokemon — it's to understand, from the ground up,
 
 ```
 pokemon-silver-gym/
+├── env/                       # Shared environment layer
+│   ├── pyboy_wrapper.py       # PyBoy wrapper: step, reset, save/load state, GIF capture
+│   ├── ram_reader.py          # RAM reader: position, HP, badges, battle, event flags
+│   ├── pokemon_env_cnn.py     # Gymnasium env (CnnPolicy): Dict obs (RGB image + state vector)
+│   ├── pokemon_env_mlp.py     # Gymnasium env (MlpPolicy) — legacy, superseded by the CNN line
+│   ├── rewards.py             # Shared, RAM-driven reward function
+│   ├── frontier_archive.py    # Go-Explore frontier reset (trajectory state-sharing)
+│   └── actions.py             # Action space (8 GBC buttons)
 │
-├── env/                          # Shared layer used by both agents
-│   ├── pyboy_wrapper.py          # PyBoy emulator wrapper: step, reset, save/load state, GIF capture
-│   ├── ram_reader.py             # ROM RAM reader: position, HP, badges, battle state
-│   ├── pokemon_env.py            # Gymnasium Env: obs space + action space + reward function
-│   └── actions.py                # Action space definition (8 GBC buttons)
+├── agents/rl/
+│   ├── config.py              # Hyperparameters + run config
+│   ├── train_cnn.py           # PPO CnnPolicy training (SubprocVecEnv + TensorBoard)
+│   ├── train_mlp.py           # PPO MlpPolicy training — legacy
+│   ├── evaluate_cnn.py        # Eval over N episodes (per-episode JSONL, GIF, live --watch)
+│   ├── make_gif.py            # Watchable gameplay GIF of a checkpoint
+│   ├── map_layout.py          # Map-id → global canvas offsets (corridor stitching table)
+│   ├── visualize_map.py       # Trajectory + heatmap overlay on the corridor map (PNG + GIF)
+│   ├── play.py                # Dockerized playback entrypoint (egg-delivered → Falkner)
+│   └── evaluate.py            # MLP eval — legacy
+├── agents/llm/                # LLM ReAct agent (planned)
 │
-├── agents/
-│   ├── rl/                       # Reinforcement Learning Agent (PPO)
-│   │   ├── config.py             # Hyperparameters
-│   │   ├── train.py              # PPO training loop (SubprocVecEnv + TensorBoard)
-│   │   └── evaluate.py           # Evaluation over N episodes
-│   └── llm/                      # LLM Agent (ReAct loop)
-│       ├── tools.py              # Tool definitions in OpenAI tool-calling format
-│       ├── prompts.py            # System prompt + state serialization
-│       ├── agent.py              # Main ReAct loop
-│       └── run.py                # Entry point with full logging
-│
-├── evaluation/
-│   ├── benchmark.py              # Runs both agents, collects metrics
-│   ├── metrics.py                # Badge rate, steps, tile coverage
-│   └── visualize.py             # GIF generation, heatmaps, reward plots
-│
-├── notebooks/                    # Exploration and analysis
-│   ├── 01_explore_pyboy.ipynb    # PyBoy + RAM address verification
-│   └── 02_training_analysis.ipynb
-│
-├── tests/                        # Unit tests
-├── saves/                        # Initial game save state (New Bark Town, Totodile)
-├── runs/                         # Training output (gitignored)
-├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
+├── assets/maps/               # Background image (optional) for the trajectory overlay
+├── Dockerfile                 # CPU-only image for the playback demo
+├── tests/                     # RAM/event verification + smoke tests
+├── saves/                     # Save states (egg_delivered_clean.state + others)
+└── runs/                      # Checkpoints, TensorBoard logs, maps, run logs (gitignored)
 ```
 
 **Data flow**:
 ```
-PyBoy (GBC emulator) → RAM Reader → Gymnasium Env → RL Agent (PPO) or LLM Agent (ReAct)
-                                                              ↓
-                                                    PyBoy.button(action) → next frame
+PyBoy (GBC emulator) → RAMReader → Gymnasium Env → PPO agent
+                                          ↓
+                                 PyBoy.button(action) → next frame
 ```
 
 ---
 
-## Win Condition
+## Win condition
 
-Both agents start from New Bark Town with Totodile as their starter Pokemon.  
-**Goal**: navigate to Violet City and defeat Gym Leader Falkner to earn the **Zephyr Badge**.
-
-Sub-milestones tracked:
-- Tiles explored (navigation progress)
-- Trainer battles won
-- Badge obtained (yes/no per episode)
+Both agents start in New Bark Town with Totodile. **Goal**: reach Violet City and beat Gym
+Leader Falkner for the **Zephyr Badge**. Tracked sub-milestones: tiles explored, the egg quest
+(Mr. Pokemon → Elm, which opens the Route 30 story gate), trainer battles won, badge obtained.
 
 ---
 
-## Agents
+## RL agent — PPO
 
-### RL Agent — Proximal Policy Optimization (PPO)
-- Algorithm: PPO via Stable Baselines3
-- Policy: MLP (observation is a numeric vector, not image frames)
-- Training: 8 parallel environments (SubprocVecEnv), GPU-accelerated policy updates
-- Observation: `[map_id, player_x, player_y, badge_count, lead_hp, lead_max_hp, in_battle, unique_tiles]`
-- Reward: exploration bonus + badge win condition + trainer defeat signals
+- Algorithm: PPO (Stable Baselines3), **CnnPolicy** + `VecFrameStack(4)`. The earlier MlpPolicy
+  line was superseded — full rationale and run history in `training_log.md`.
+- Observation: Dict — downsampled 72×80 RGB screen + an 11-float state vector (HP, levels,
+  battle, story flags) so the policy can read state pixels don't show.
+- Reward: dense coordinate exploration + story events (egg, badge) + battle wins, all RAM-driven
+  (`env/rewards.py`).
+- Training: 12 parallel envs (SubprocVecEnv), GPU policy updates.
+- **v2 re-baseline (current)**: one generalist from `saves/egg_delivered_clean.state` (the egg is
+  already delivered, so the Route 30 gate is open and the backtracking sub-quest is skipped — the
+  reward's carry/return terms are self-inert from this state). Objective: navigate Elm's Lab →
+  Cherrygrove → Route 30/31 → Violet City → beat Falkner. Validate short, then scale to a long run.
 
-### LLM Agent — ReAct Loop with Ollama
-- Pattern: ReAct (Reason + Act) — think in natural language, call a tool, repeat
-- LLM: local Ollama (`llama3.1:8b` or `llama3.3:70b` in 4-bit)
-- API: OpenAI-compatible SDK (`from openai import OpenAI` with `base_url="http://localhost:11434/v1"`)
-- Tools: `press_button`, `get_game_state`, `wait_frames`
-- Each step: RAM state → serialized text → LLM reasons → tool call → execute
+## LLM agent — ReAct (planned)
+
+- Pattern: ReAct (reason + act) over a local Ollama model via the OpenAI-compatible SDK.
+- Tools: `press_button`, `get_game_state`, `wait_frames`.
 
 ---
 
-## Comparison Metrics
+## Comparison metrics
 
 | Metric | RL Agent | LLM Agent |
 |--------|----------|-----------|
 | Badge rate | % over 100 eval episodes | % over 20 runs |
 | Steps per episode | mean ± std | mean ± std |
 | Unique tiles explored | heatmap | heatmap |
-| Wall-clock time per run | minutes | minutes |
+| Wall-clock per run | minutes | minutes |
 | Tokens per run | N/A | Ollama token count |
 
 ---
 
 ## Setup
 
-### Prerequisites
-
-- Python 3.12+ (project uses Python 3.14)
-- NVIDIA GPU with CUDA (for RL training)
-- [Ollama](https://ollama.com) installed and running locally (for LLM agent)
-- Pokemon Silver ROM (`*.gbc`) — not included for copyright reasons. You must provide your own legal copy.
-
-### Install
+**Prerequisites**: Python 3.12+ (3.14 used), an NVIDIA GPU with CUDA (for RL training), and your
+own legal Pokemon Silver ROM (`*.gbc`, not included).
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/pokemon-silver-gym.git
-cd pokemon-silver-gym
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp /path/to/pokemon_silver.gbc pokemon_rom.gbc
 ```
 
-### Place your ROM
+Train (CNN line) and watch metrics:
 
 ```bash
-cp /path/to/your/pokemon_silver.gbc pokemon_rom.gbc
+python -m agents.rl.train_cnn
+tensorboard --logdir ./runs/          # http://localhost:6006
 ```
 
-### Run RL training
+Evaluate a checkpoint (stochastic; `--watch` opens an SDL2 window):
 
 ```bash
-python agents/rl/train.py
-tensorboard --logdir ./runs/   # open http://localhost:6006
+python -m agents.rl.evaluate_cnn --model runs/checkpoints/<run>/<ckpt>.zip \
+  --state saves/start.state --episodes 20 --log
 ```
 
-### Run LLM agent
+Visualize where the agent went (trajectory + heatmap overlay → PNG + GIF):
 
 ```bash
-ollama pull llama3.1:8b
-python agents/llm/run.py
+python -m agents.rl.visualize_map --model runs/checkpoints/agent_076/<ckpt>.zip \
+  --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_076
+# progression montage over all checkpoints of a run:
+python -m agents.rl.visualize_map --all-checkpoints runs/checkpoints/agent_076 \
+  --state saves/egg_delivered_clean.state --out runs/maps/agent_076
 ```
 
-### Docker
+(If `assets/maps/johto_corridor.png` is absent, a labelled schematic background is generated — see
+`docs/MAP_VISUALIZATION.md`.)
+
+Dockerized playback demo (CPU-only; mount your ROM + a checkpoint):
 
 ```bash
-docker-compose up
+docker build -t silver-falkner-agent .
+docker run --rm \
+  -v "$PWD/pokemon_rom.gbc:/app/pokemon_rom.gbc" \
+  -v "$PWD/runs:/app/runs" \
+  -e MODEL=/app/runs/checkpoints/agent_076/agent_076_final.zip \
+  silver-falkner-agent --map
 ```
 
 ---
 
-## Build Checklist
+## Status
 
-### Phase 0 — Project Setup
-
-- [x] Create GitHub repository `pokemon-silver-gym` (public)
-- [x] Clone locally
-- [x] Create virtual environment (`.venv`) and install dependencies
-- [x] Create project directory structure (`env/`, `agents/rl/`, `agents/llm/`, `evaluation/`, `tests/`, `saves/`)
-- [x] Add `__init__.py` to `env/`, `agents/`, `agents/rl/`, `agents/llm/`, `evaluation/`
-- [x] Install GitHub Copilot in VS Code
-- [x] Finalize `.gitignore` (ROM `*.gbc`, `runs/`, `.venv/`, `__pycache__/`, `saves/*.pkl`)
-- [x] Write `requirements.txt` with pinned versions
-- [x] First commit and push
+- [x] PyBoy wrapper + verified RAM reader (position, HP, badges, battle, event flags)
+- [x] Gymnasium env (CNN + MLP lines) + RAM-driven reward shaping
+- [x] PPO training pipeline (SubprocVecEnv + TensorBoard + checkpoints)
+- [x] Evaluation tooling (per-episode JSONL, GIF, live `--watch`)
+- [x] Map-visualization overlay (trajectory + heatmap, PNG + GIF) and Dockerized playback demo
+- [~] RL v2 re-baseline: generalist from `egg_delivered_clean.state` → Falkner (validation run)
+- [~] Reaching the Zephyr Badge from `start.state` — open research problem (see `training_log.md`)
+- [ ] LLM ReAct agent
+- [ ] Evaluation/comparison suite + writeup
 
 ---
 
-### Phase 1 — PyBoy Exploration & RAM Reading
-
-- [x] Open `notebooks/01_explore_pyboy.ipynb`
-- [x] Read PyBoy documentation: https://github.com/Baekalfen/PyBoy
-- [x] Run the game headless: `PyBoy("pokemon_rom.gbc", window="null")`
-- [x] Advance frames: `pyboy.tick(1, render=False)`
-- [x] Capture a screenshot: `pyboy.screen.ndarray`
-- [x] Read a RAM address: `pyboy.memory[0xDCB8]` (player X position)
-- [x] Run the game with SDL window, play manually, print RAM values while moving
-- [x] Verify empirically: Player X (`0xDCB8`), Player Y (`0xDCB7`), Map ID (`0xDCB6`)
-- [x] Verify: Badge bits (`0xD857`) — bit 0 should flip after beating Falkner
-- [x] Verify: Battle flag (`0xD116`) — changes when entering/exiting a battle
-- [x] Verify: Lead Pokemon HP (`0xDCFC`) and Max HP (`0xDCFE`)
-- [x] Create initial save state after choosing Totodile in New Bark Town → `saves/initial_state.pkl`
-- [x] Commit notebook with findings
-
----
-
-### Phase 2 — Gymnasium Environment
-
-- [x] Read Gymnasium documentation: https://gymnasium.farama.org/ ("Your first environment")
-- [x] Write `env/actions.py` — `ACTIONS` list + `gymnasium.spaces.Discrete(8)`
-- [x] Write `env/ram_reader.py` — `RAMReader` class, `read_all() -> dict`
-- [x] Write `env/pyboy_wrapper.py` — `PyBoyWrapper`: `__init__`, `step(action)`, `reset()`, `capture_gif()`
-- [x] Write `env/pokemon_env.py` — `PokemonEnv(gymnasium.Env)`: `observation_space`, `action_space`, `step()`, `reset()`
-- [x] Test environment with random agent (1000 steps, no crash, reward printed)
-- [x] Write `tests/test_ram_reader.py` — test known values (badge count = 0 at start)
-- [x] Write `tests/test_env.py` — test reset shape, step reward, done flag
-- [x] Run `pytest tests/` — all pass
-- [x] Commit
-
----
-
-### Phase 3 — RL Agent: Training Loop
-
-- [x] Read SB3 docs: https://stable-baselines3.readthedocs.io/
-- [x] Write `agents/rl/config.py` — all hyperparameters as constants
-- [x] Write `make_env(rank)` helper function (seeded env factory)
-- [x] Write `agents/rl/train.py` — `SubprocVecEnv` (4–8 envs) + PPO + `CheckpointCallback`
-- [ ] Launch TensorBoard: `tensorboard --logdir ./runs/`
-- [ ] Run training 100k steps — verify TensorBoard shows `ep_rew_mean` and `ep_len_mean`
-- [ ] Debug if reward is always 0 or episode length always max (reward/RAM reader issue)
-- [ ] Write `agents/rl/evaluate.py` — load model, run N episodes, print metrics
-- [ ] Generate first GIF from a trained checkpoint
-- [ ] Commit
-
----
-
-### Phase 4 — Reward Engineering
-
-- [ ] Add tile tracking to `PokemonEnv`: `self.visited_tiles = set()` tracking `(map_id, x, y)`
-- [ ] Update `step()`: reward `new_tiles * 0.01`, penalize revisiting if agent loops
-- [ ] If agent never leaves starting area: increase reward for map transition
-- [ ] Optional: add image-based exploration bonus (hash of downsampled screen frames)
-- [ ] Document all reward changes and rationale in notebook
-- [ ] Run 500k–1M step training — TensorBoard shows exploration improvement
-- [ ] Generate comparison GIF: early checkpoint vs later checkpoint
-- [ ] Commit
-
----
-
-### Phase 5 — LLM Agent: ReAct Loop
-
-- [ ] Verify Ollama is running: `ollama serve` (background) + `ollama pull llama3.1:8b`
-- [ ] Test Ollama from Python (OpenAI SDK with `base_url="http://localhost:11434/v1"`)
-- [ ] Write `agents/llm/tools.py` — `TOOLS` list in OpenAI tool-calling format
-- [ ] Write `agents/llm/prompts.py` — system prompt + `build_user_message(state_dict) -> str`
-- [ ] Write `agents/llm/agent.py` — ReAct loop: read state → serialize → Ollama → execute tool → repeat
-- [ ] Write `agents/llm/run.py` — entry point, saves full log (thought + action + state) to JSON
-- [ ] Test manually for 5–10 runs — read Thought logs, adjust system prompt if needed
-- [ ] Run 20 full evaluation runs and record badge rate
-- [ ] Commit
-
----
-
-### Phase 6 — Evaluation & Comparison
-
-- [ ] Write `evaluation/metrics.py` — `compute_badge_rate`, `compute_mean_steps`, `compute_tile_coverage`
-- [ ] Write `evaluation/benchmark.py` — run RL (100 episodes) + LLM (20 runs), save `results.json`
-- [ ] Write `evaluation/visualize.py` — reward curve, heatmaps, comparison table, GIF generator
-- [ ] Run full benchmark, generate all visualizations
-- [ ] Create `notebooks/02_training_analysis.ipynb` with full analysis and commentary
-- [ ] Commit
-
----
-
-### Phase 7 — Polish & Publication
-
-- [ ] Write complete `README.md` — architecture, installation, results with GIFs, learnings
-- [ ] Write `Dockerfile` + `docker-compose.yml` (with NVIDIA runtime for GPU)
-- [ ] Test Docker from scratch (clean path, no venv)
-- [ ] Code cleanup: remove debug prints, add one-line docstrings to public functions
-- [ ] Run `pytest tests/` final check — all pass
-- [ ] Create GitHub Release v1.0 with best GIFs as release assets
-- [ ] Publish blog post on spaghettibytes.blog
-- [ ] Publish LinkedIn post
-- [ ] Update FAANG roadmap: mark Pokemon Silver Gym as COMPLETE
-
----
-
-## Key References
+## Key references
 
 - [PyBoy](https://github.com/Baekalfen/PyBoy) — Game Boy emulator in Python
-- [pret/pokegold](https://github.com/pret/pokegold) — Pokemon Silver full decompilation (RAM map)
+- [pret/pokegold](https://github.com/pret/pokegold) — Pokemon Gold/Silver decompilation (RAM map)
 - [Stable Baselines3](https://stable-baselines3.readthedocs.io/) — RL algorithms
 - [Gymnasium](https://gymnasium.farama.org/) — RL environment standard
 - [PokemonRedExperiments](https://github.com/PWhiddy/PokemonRedExperiments) — reference RL project

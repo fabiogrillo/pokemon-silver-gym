@@ -52,9 +52,13 @@ def build_vec_env(state_path: str, gif_dir: str | None, watch: bool):
     return vec, ref[0]
 
 
+ACTION_NAMES = ["up", "down", "left", "right", "a", "b", "start", "select"]
+WAYPOINT_NAMES = ["start", "cherrygrove", "route30_gate", "route31", "violet", "gym"]
+
+
 def evaluate(model_path: str, n_episodes: int, state_path: str,
              deterministic: bool, gif_dir: str | None,
-             watch: bool, max_steps: int | None):
+             watch: bool, max_steps: int | None, log_path: str | None = None):
     if not torch.cuda.is_available():
         print("[device] CUDA not available — CNN inference on CPU will be slow but works.")
         device = "cpu"
@@ -76,15 +80,24 @@ def evaluate(model_path: str, n_episodes: int, state_path: str,
 
     results = []
     obs = vec.reset()
+    needs_reset = False  # True when the previous episode ended via --max-steps cap (no env done)
 
     for ep in range(1, n_episodes + 1):
+        if needs_reset:
+            # With --max-steps we cut the episode WITHOUT the env terminating: reset explicitly
+            # so per-episode counters (battles, tiles, egg flags) start clean.
+            obs = vec.reset()
+            needs_reset = False
         total_reward = 0.0
         steps = 0
         max_tiles = 0
         battle_steps = 0
+        action_counts = np.zeros(len(ACTION_NAMES), dtype=int)
+        done_flag = False
 
         while True:
             action, _ = model.predict(obs, deterministic=deterministic)
+            action_counts[int(action[0])] += 1
             obs, rewards, dones, infos = vec.step(action)
             total_reward += float(rewards[0])
             steps += 1
@@ -94,36 +107,62 @@ def evaluate(model_path: str, n_episodes: int, state_path: str,
             battle_steps += int(info.get("in_battle", 0))
 
             if dones[0]:
+                done_flag = True
                 break
             if max_steps is not None and steps >= max_steps:
                 break
 
-        # VecEnv auto-resets BEFORE returning the final obs of an episode,
-        # so reading the badge bit now would reflect the NEW episode, not the one
-        # just completed. Workaround: peek at the previous episode's final info.
-        # infos[0] still carries the terminal info dict from the just-ended episode.
-        got_badge = bool(infos[0].get("zephyr", False))
-        # Fallback if terminal_observation key isn't present
-        if "TimeLimit.truncated" in infos[0]:
-            truncated = infos[0]["TimeLimit.truncated"]
+        # VecEnv auto-resets BEFORE returning the final obs of an episode, but infos[0]
+        # still carries the terminal info dict of the just-ended episode.
+        info = infos[0]
+        got_badge = bool(info.get("zephyr", False))
+        if done_flag:
+            end_cause = "badge" if got_badge else ("death" if info.get("hp_ratio", 1) <= 0 else "truncated")
         else:
-            truncated = False
+            end_cause = "step_cap"
+            needs_reset = True
 
         battle_pct = (battle_steps / steps * 100) if steps else 0.0
-        results.append({
+        top_actions = ", ".join(
+            f"{ACTION_NAMES[i]}:{action_counts[i] / steps * 100:.0f}%"
+            for i in np.argsort(action_counts)[::-1][:4]
+        )
+        ep_result = {
             "episode": ep,
-            "reward":  total_reward,
+            "reward":  round(total_reward, 2),
             "steps":   steps,
-            "tiles":   max_tiles,
+            "tiles":   int(max_tiles),
             "badge":   got_badge,
-            "in_battle_pct": battle_pct,
-        })
+            "in_battle_pct": round(battle_pct, 1),
+            "end_cause": end_cause,
+            "max_waypoint": WAYPOINT_NAMES[int(info.get("max_waypoint", 0))],
+            "egg_received": bool(info.get("egg_received", False)),
+            "egg_delivered": bool(info.get("egg_delivered", False)),
+            "route_trainers_beaten": int(info.get("route_trainers_beaten", 0)),
+            "gym_trainers_beaten": int(info.get("gym_trainers_beaten", 0)),
+            "battles_won": int(info.get("battles_won", 0)),
+            "battles_fled": int(info.get("battles_fled", 0)),
+            "battles_lost": int(info.get("battles_lost", 0)),
+            "lead_level": int(info.get("lead_level", 0)),
+            "action_counts": {ACTION_NAMES[i]: int(c) for i, c in enumerate(action_counts)},
+        }
+        results.append(ep_result)
 
         print(
-            f"Ep {ep:3d} | reward={total_reward:+8.1f} | steps={steps:5d} | "
-            f"tiles={max_tiles:4d} | in_battle={battle_pct:5.1f}% | "
-            f"badge={'YES' if got_badge else 'no'}"
+            f"Ep {ep:3d} | reward={total_reward:+8.1f} | steps={steps:5d} | tiles={max_tiles:4d} | "
+            f"in_battle={battle_pct:5.1f}% | wp={ep_result['max_waypoint']:13s} | "
+            f"egg={'D' if ep_result['egg_delivered'] else ('R' if ep_result['egg_received'] else '-')} | "
+            f"W/F/L={ep_result['battles_won']}/{ep_result['battles_fled']}/{ep_result['battles_lost']} | "
+            f"lv={ep_result['lead_level']:2d} | end={end_cause}"
         )
+        print(f"        top actions: {top_actions}")
+
+        if log_path:
+            import json
+            with open(log_path, "a") as f:
+                f.write(json.dumps({"model": os.path.basename(model_path),
+                                    "state": os.path.basename(state_path),
+                                    "deterministic": deterministic, **ep_result}) + "\n")
 
     vec.close()
 
@@ -139,10 +178,16 @@ def evaluate(model_path: str, n_episodes: int, state_path: str,
     print()
     print(f"Summary over {n_episodes} episodes from {os.path.basename(state_path)}:")
     print(f"  Badge obtained: {badge_rate*100:.1f}%  ({sum(r['badge'] for r in results)}/{n_episodes})")
+    print(f"  Egg received:   {sum(r['egg_received'] for r in results)}/{n_episodes}   delivered: {sum(r['egg_delivered'] for r in results)}/{n_episodes}")
+    print(f"  Reached: " + ", ".join(f"{w}={sum(WAYPOINT_NAMES.index(r['max_waypoint']) >= i for r in results)}/{n_episodes}"
+                                     for i, w in enumerate(WAYPOINT_NAMES) if i > 0))
+    print(f"  Battles W/F/L:  {sum(r['battles_won'] for r in results)}/{sum(r['battles_fled'] for r in results)}/{sum(r['battles_lost'] for r in results)}")
     print(f"  Average reward: {avg_reward:+.1f} ± {std_reward:.1f}")
     print(f"  Average steps:  {avg_steps:.0f} ± {std_steps:.0f}")
     print(f"  Average tiles:  {avg_tiles:.0f} ± {std_tiles:.0f}")
     print(f"  Average in_battle: {avg_battle:.1f}%")
+    if log_path:
+        print(f"  Per-episode JSONL appended to: {log_path}")
 
 
 if __name__ == "__main__":
@@ -160,11 +205,23 @@ if __name__ == "__main__":
                         help="Open SDL2 window to watch the agent play live")
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Truncate each episode after N steps (useful with --watch for quick previews)")
+    parser.add_argument("--log", nargs="?", const="auto", default=None,
+                        help="Append per-episode JSONL results to a file (default: runs/eval_logs/<model>_<ts>.jsonl)")
     args = parser.parse_args()
 
     gif_dir = "runs/eval_gifs" if args.gif else None
     if gif_dir:
         os.makedirs(gif_dir, exist_ok=True)
 
+    log_path = None
+    if args.log:
+        if args.log == "auto":
+            import time
+            os.makedirs("runs/eval_logs", exist_ok=True)
+            stem = os.path.splitext(os.path.basename(args.model))[0]
+            log_path = f"runs/eval_logs/{stem}_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
+        else:
+            log_path = args.log
+
     evaluate(args.model, args.episodes, args.state, args.deterministic,
-             gif_dir, args.watch, args.max_steps)
+             gif_dir, args.watch, args.max_steps, log_path)

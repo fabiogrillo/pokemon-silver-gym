@@ -1,40 +1,33 @@
 """
-Monitor completo: party levels, enemy stats, e rilevamento di TUTTI i cambiamenti
-nei flag di evento (0xD7B7–0xD8B6).
+Full monitor: party levels, enemy stats, and detection of ALL event-flag changes
+(0xD7B7–0xD8B6). Play in the SDL2 window yourself; every flag change is printed and
+logged to tests/debug.log with the exact RAM address, flag number, and direction
+(RISE/FALL). This is the most reliable way to discover which addresses map to which
+in-game events.
 
-Usa la finestra SDL2 per giocare tu stesso: ogni volta che un flag cambia,
-viene stampato a terminale E loggato in tests/debug.log con:
-  - indirizzo RAM esatto
-  - numero del flag
-  - direzione (RISE/FALL)
-
-Questo è il modo più affidabile per scoprire quali indirizzi corrispondono
-a quali eventi in-game.
-
-Uso:
+Usage:
     python tests/test_enemy_level.py [state_name]
+    state_name: save file without the .state extension.
+                Default: violet_city_gym (to test battle/enemy stats).
+                Use "start" to test event flags from the beginning.
 
-    state_name: nome del file di salvataggio senza estensione .state
-                Default: violet_city_gym (per testare battle/enemy stats)
-                Usa "start" per testare i flag di evento dall'inizio
+Examples:
+    python tests/test_enemy_level.py                       # violet_city_gym.state
+    python tests/test_enemy_level.py start                 # start.state (flag events)
+    python tests/test_enemy_level.py before_elm_delivery   # before_elm_delivery.state
 
-Esempi:
-    python tests/test_enemy_level.py                       # carica violet_city_gym.state
-    python tests/test_enemy_level.py start                 # carica start.state (flag events)
-    python tests/test_enemy_level.py before_elm_delivery   # carica before_elm_delivery.state
+Party-level checks:
+  - From start.state: party_levels = [5, 0, 0, 0, 0, 0]  (Totodile lv5, slots 2-6 empty)
+  - After catching one: party_levels = [5, X, 0, 0, 0, 0]  (slot 2 populates)
+  - Random/wrong values → struct size 0x30 is incorrect
 
-Cosa verificare per i party levels:
-  - Da start.state: party_levels = [5, 0, 0, 0, 0, 0]  (Totodile lv5, slot 2-6 vuoti)
-  - Se catturi un Pokemon: party_levels = [5, X, 0, 0, 0, 0]  (slot 2 si popola)
-  - Se i valori sono casuali/sbagliati → struct size 0x30 non è corretto
-
-Cosa verificare per i flag di evento:
-  - Entra in battaglia → vedi flag cambiare (battle_type/battle_flags)
-  - Batti il rivale → vedi 0xD88E bit6 FALL (già noto: flag #1726)
-  - Ricevi uovo da Mr.Pokemon → vedi 0xD7BA bit6 RISE (flag #30)
-  - Consegna uovo a Elm → vedi 0xD7BA bit7 RISE (flag #31)
-  - Batti un trainer in palestra → NUOVO flag da scoprire!
-  - Ricevi running shoes / Pokédex → NUOVO flag da scoprire!
+Event-flag checks:
+  - Enter battle → flags change (battle_type/battle_flags)
+  - Beat the rival → 0xD88E bit6 FALL (known: flag #1726)
+  - Receive egg from Mr. Pokemon → 0xD7BA bit6 RISE (flag #30)
+  - Deliver egg to Elm → 0xD7BA bit7 RISE (flag #31)
+  - Beat a gym trainer → NEW flag to discover
+  - Receive Pokédex → NEW flag to discover
 """
 import sys
 from pyboy import PyBoy

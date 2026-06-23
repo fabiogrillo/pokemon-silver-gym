@@ -1,8 +1,8 @@
 """
-Carica uno state, prende snapshot PRE-evento, monitora la fine della battaglia,
-prende snapshot POST-evento automaticamente, stampa il diff.
+Load a state, take a PRE-event snapshot, watch for the battle to end, take a POST-event
+snapshot automatically, then print the diff.
 
-Uso:
+Usage:
     python tests/ram_scan.py checkpoint
 """
 import sys
@@ -23,15 +23,15 @@ def diff(before, after, addr_filter=None, top_n=60):
     if addr_filter:
         lo, hi = addr_filter
         changed = changed[(changed + RAM_START >= lo) & (changed + RAM_START <= hi)]
-    print(f"\n{len(changed)} byte cambiati" + (f" in 0x{addr_filter[0]:04X}-0x{addr_filter[1]:04X}" if addr_filter else "") + ":")
+    print(f"\n{len(changed)} bytes changed" + (f" in 0x{addr_filter[0]:04X}-0x{addr_filter[1]:04X}" if addr_filter else "") + ":")
     for idx in changed[:top_n]:
         addr = RAM_START + idx
         b, a = before[idx], after[idx]
         new_bits = a & ~b & 0xFF
         print(f"  0x{addr:04X}:  {b:3d} (0b{b:08b})  ->  {a:3d} (0b{a:08b})"
-              + (f"  [nuovi bit: 0b{new_bits:08b}]" if new_bits else ""))
+              + (f"  [new bits: 0b{new_bits:08b}]" if new_bits else ""))
     if len(changed) > top_n:
-        print(f"  ... e altri {len(changed) - top_n}")
+        print(f"  ... and {len(changed) - top_n} more")
 
 pyboy = PyBoy("pokemon_rom.gbc", window="SDL2", sound=False)
 with open(LOAD_PATH, "rb") as f:
@@ -39,8 +39,8 @@ with open(LOAD_PATH, "rb") as f:
 pyboy.set_emulation_speed(3)
 
 snap_before = snapshot(pyboy)
-print(f"State '{LOAD_PATH}' caricato. Snapshot PRE preso.")
-print("Combatti la battaglia. Il diff scatta automaticamente alla fine.")
+print(f"State '{LOAD_PATH}' loaded. PRE snapshot taken.")
+print("Fight the battle. The diff fires automatically when it ends.")
 
 in_battle  = False
 snap_after = None
@@ -51,8 +51,8 @@ while pyboy.tick(1):
         in_battle = True
     if in_battle and battle_type == 0 and snap_after is None:
         snap_after = snapshot(pyboy)
-        print("\nBattaglia terminata! Snapshot POST preso. Puoi chiudere la finestra con X.")
-        # continua a girare cosi l'utente vede il risultato in gioco
+        print("\nBattle ended! POST snapshot taken. You can close the window with X.")
+        # keep running so the user sees the result in-game
 
 if snap_after is None:
     snap_after = snapshot(pyboy)
@@ -60,9 +60,9 @@ if snap_after is None:
 pyboy.stop()
 
 print("\n" + "="*60)
-print("DIFF COMPLETO (tutte le zone RAM):")
+print("FULL DIFF (all RAM regions):")
 diff(snap_before, snap_after)
 
 print("\n" + "="*60)
-print("DIFF FILTRATO — zona event flags (0xD7B7-0xD8B6):")
+print("FILTERED DIFF — event flags region (0xD7B7-0xD8B6):")
 diff(snap_before, snap_after, addr_filter=(0xD7B7, 0xD8B6))
