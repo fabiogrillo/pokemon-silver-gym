@@ -12,7 +12,8 @@ from .rewards import (
 )
 from .frontier_archive import FrontierArchive, cell_key, frontier_score
 
-MAX_STEPS = 2**16  # 65536. The "65k hurts" diagnosis (10c-10d) was confounded by the visited-mask
+MAX_STEPS = 2**17  # 131072 — agent_082: 2× longer episodes (PWhiddy used ~163k for the analogous long task)
+                   # to test if the Route-30-capable policy reaches Route 31 with more steps/episode. (prev 65536.) The "65k hurts" diagnosis (10c-10d) was confounded by the visited-mask
                    # (the real culprit, per the 10e ablation). The egg delivery — never experienced
                    # in any run — needs post-pickup wandering time (PWhiddy solved the analogous
                    # Oak's-Parcel backtrack with 163k-step episodes).

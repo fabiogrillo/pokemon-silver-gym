@@ -1986,6 +1986,67 @@ The RL line of the project is concluded. Final results, banked:
   `eval_gated_mixture.py`, `saves/falkner_battle.state`, `docs/PROJECT_NARRATIVE.md` (video/blog script),
   and all checkpoints. No further RL runs planned. GPU idle.
 
+---
+
+## RL v2 — RE-OPENED (2026-06-23, Whidden-inspired re-baseline, Fabio's decision)
+
+After re-watching PWhiddy's video, RL was re-opened with a SIMPLIFIED objective (he skipped the early
+backtracking; we skip it too). New baseline: ONE generalist trained from **`saves/egg_delivered_clean.state`**
+(New Bark, egg already delivered → Route-30 gate already open), goal = navigate New Bark → Violet City →
+**beat Falkner**, no backtracking. New tooling: offline map-visualization overlay (`agents/rl/visualize_map.py`),
+Dockerized playback (`agents/rl/play.py`). The carry/return reward logic is **self-inert** from this state
+(egg pre-delivered), so no reward surgery — just re-enable forward exploration.
+
+## Agent 076 — v2 cold generalist from egg-delivered (2026-06-23)
+- Cold (`INIT=None`), `EXPLORATION_SCALE=1.0` re-enabled, `12×egg_delivered_clean`, no frontier, 15M validation.
+- **Outcome (stopped ~9M): the Route-29 wall, confirmed.** `nav/reach_cherrygrove` flat **0.0** through 8.7M;
+  rollout = 89% on Route 29 / 11% New Bark, never reaches Cherrygrove — the agent grinds Route-29 wild battles.
+- **Lesson**: a cold pure-start (even from egg-delivered) does NOT learn directed forward navigation — same
+  family as Agent 019/066. More steps alone reinforce the grind; needs STATE DIVERSITY.
+
+## Agent 077 — v2.1 + frontier (Go-Explore), no seed (2026-06-23)
+- Frontier ON (4/12 envs), `FRONTIER_SEED_FROM=None`, else = 076 (explore 1.0).
+- **Outcome (stopped ~15M): FAILED the same way.** Archive stuck at ~72 cells (only New Bark + EAST Route 29);
+  `nav/`+`front/reach_cherrygrove` both 0. The frontier resets only into cells it has already discovered, so
+  it **amplifies the reachable region but cannot CROSS the Route-29→Cherrygrove bottleneck unaided**.
+- **Lesson**: frontier without seeding ≠ a fix for a bottleneck. It needs diversity placed PAST the wall
+  (seeding, or curriculum anchors) — consistent with Agent 067's seeded result.
+
+## Agent 078 — v2.2 forward curriculum (Violet anchors) + bidirectional frontier (2026-06-23)
+- `CURRICULUM_STATES_CNN = 3×violet_city + 2×violet_city_gym + 7×egg_delivered_clean` (last 4 = frontier envs),
+  explore 1.0. Idea: Violet anchors seed the FORWARD end so the shared frontier has cells past the bottleneck.
+- **Outcome (stopped ~15M): partial.** Archive bridged from BOTH ends (Route 29 start-side + Violet/Route-31
+  anchor-side, 634 cells) but the MIDDLE stayed empty (Cherrygrove `26_3` = 0); `nav/reach_cherrygrove` still 0.
+  The two fronts approached but didn't meet. `front/badge_rate` ~0.7 (gym anchors trivially beat Falkner — an
+  ARTIFACT of starting at the gym, not navigation).
+- **Lesson**: anchors + frontier populate the archive but don't, by themselves, drive the START policy across
+  the gap; needed a stronger forward pull.
+
+## Agent 079 — v2.3 = v2.2 + EXPLORATION_SCALE 4.0 (2026-06-23) — BREAKTHROUGH then PLATEAU
+- Cold, explore **4.0** (a new-MAP crossing now out-earns the Route-29 grind), else = 078. Budget 480M (~2 days).
+- **BREAKTHROUGH ~13-15M**: the corridor archive connected **end-to-end** (New Bark→Route29→Cherrygrove→Route30→
+  Route31→Violet Gatehouse→Violet→Gym), and — for the FIRST TIME ever — the START policy advanced past the
+  Phase-1 wall, **segment by segment**: `reach_cherrygrove` consolidated to 1.0 ~28M, `reach_route30_gate` to
+  1.0 ~37M (pace accelerating: ~14M then ~9M/segment).
+- **PLATEAU at Route 30**: `nav/reach_route31` stayed **0.0 for ~83M** (44M→127M, with a noisy dip+recovery on
+  route30_gate). Stopped ~130M.
+- **Diagnosis (Fabio's insight)**: `EXPLORATION_SCALE=4.0` rewards entering ANY new map — including **Dark Cave
+  & other dead-end maps** (235 cave/bank-3 cells harvested! 2nd-most after the corridor) and Violet's Sprout
+  Tower / school. Each cave floor / tower floor is a fresh "+0.4 new map", LURING the agent off the path; it
+  burns the episode in caves instead of crossing into Route 31.
+- **Lesson (big)**: bidirectional Go-Explore + a strong exploration scale CONNECTS the corridor and is the first
+  method to push the start policy past Cherrygrove/Route 30 (vs the Phase-1 wall) — BUT a high exploration scale
+  creates a NEW failure mode: dead-end-map farming. The exploration reward must be **corridor-restricted**.
+
+## Agent 080 — v2.4 off-path exploration WHITELIST (2026-06-24) — RUNNING
+- `env/rewards.py`: new `CORRIDOR_WHITELIST` — the exploration reward (new-tile + new-map) pays **only** on the
+  ~8 corridor maps; caves, Sprout Tower, school, houses, side routes pay **0** (verified: corridor +0.408,
+  off-path 0.0). Combat/level/heal/badge UNCHANGED (the gym fight already works). Warm from `079@130M`, 20M
+  validation, frontier+curriculum kept.
+- **Watching `nav/reach_route31`**: if it cracks > 0, the off-path lure WAS the Route-30 plateau cause → relaunch
+  the long 480M run; if still 0 at 20M, the warm policy's habit is sticky / fix insufficient → cold rerun or a
+  Route-31 curriculum anchor.
+
 Dopo 18 run di MlpPolicy con badge=0/10
 
 Dopo 18 run di MlpPolicy con badge=0/10 da start.state in ogni eval, il problema è **rappresentazionale**, non di reward shaping. Riferimento: PokemonRedExperiments (Peter Whidden) che ha risolto Pokemon Red con CnnPolicy + frame stack.

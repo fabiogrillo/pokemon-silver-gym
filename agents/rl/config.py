@@ -7,13 +7,51 @@
 # The full historical mapping (PPO_N / PPO_CNN_N* → Agent NNN) lives at the top of
 # training_log.md. The currently-live run still uses its legacy name (it was launched
 # before the rename); the NEXT run is agent_046.
-RUN_NAME = "agent_076"    # RL v2 RE-BASELINE (Whidden-style): one GENERALIST trained from egg-delivered →
-                          # navigate New Bark → Violet City → beat Falkner. Drops the isolated-state /
-                          # backtracking design (the egg quest is already done in the start state, so the
-                          # carry/return reward logic is self-inert) and re-enables forward exploration.
-                          # COLD start (INIT_FROM_CHECKPOINT=None); single state egg_delivered_clean.state ×12.
-                          # This is a SHORT VALIDATION run (15M) to confirm the new state + exploration drive
-                          # the forward journey before scaling to a multi-day run (just bump TOTAL_TIMESTEPS_CNN).
+RUN_NAME = "agent_082"    # RL v2.6 VALIDATION: whitelist REVERTED (it failed — 081 stuck at Cherrygrove at
+                          # 60M, worse than 079) + MAX_STEPS 65k→131k (2× longer episodes). Hypothesis: 079
+                          # reaches Route 30 but RUNS OUT OF STEPS before Route 31; more steps/episode may let
+                          # the Route-30 policy push through. WARM from 079@130M (same reward now, so no
+                          # confound — only MAX_STEPS changed), 20M test. Watch nav/reach_route31.
+# (prior 081) RL v2.5 LONG RUN (~2 days): off-path exploration whitelist, COLD. The 080 warm
+                          # validation was inconclusive (only ~10M settled after warm re-adaptation, too short to
+                          # crack a new segment) but the whitelist is mechanically sound (cave cells 235→89,
+                          # Route 30 held). This is the clean test + real objective attempt: COLD generalist,
+                          # corridor-only exploration, curriculum + bidirectional frontier, explore 4.0, 480M.
+                          # WATCH nav/reach_route31: if it cracks, the corridor-restricted reward let it through;
+                          # if it replateaus at Route 30 past ~50M, the (26,1)→(26,2) crossing is a specific wall.
+# (prior) RL v2.4 VALIDATION: off-path exploration whitelist (no reward for caves / Sprout
+                          # Tower / houses / side routes — only the corridor pays). agent_079 plateaued at
+                          # Route 30 (reach_route31 = 0 for ~83M) because EXPLORATION_SCALE=4 lured it into
+                          # Dark Cave & other dead-end maps (235 cave cells harvested). SHORT warm-start run
+                          # (20M) from agent_079@130M to test whether removing the off-path lure lets it cross
+                          # into Route 31 and beyond; if yes → relaunch the long run. (prior 079:)
+                          # RL v2.3: v2.2 (curriculum + bidirectional frontier) + EXPLORATION_SCALE 1.0→4.0.
+                          # agent_078 STALLED at 15M: nav/reach_cherrygrove flat 0, and the archive's MIDDLE
+                          # (Cherrygrove 26_3, Route 30 26_1) stayed EMPTY — both fronts stalled (Route 29 at
+                          # 40 cells, Route 31 at 22), visited_tiles never grew → the policy doesn't explore
+                          # WEST, it loops/grinds a fixed zone. Fix: make a new-MAP crossing (+0.4 post at
+                          # scale 4) out-earn the Route-29 wild-battle grind, pulling the policy across the
+                          # bottleneck (Whidden's dense-exploration-as-primary-driver thesis). One variable
+                          # changed vs 078 to isolate its effect; curriculum + frontier kept.
+                          # (prior) RL v2.2: forward CURRICULUM (Violet anchors) + FRONTIER = bidirectional Go-Explore.
+                          # agent_077 (frontier, NO seed) FAILED the same way: frontier can only reset into
+                          # cells it has discovered, and it only ever discovered New Bark + east Route 29
+                          # (rollout: westmost local_x=6, never Cherrygrove; archive stuck at 72 cells). The
+                          # frontier can't CROSS the Route-29→Cherrygrove bottleneck unaided. Fix: seed forward
+                          # diversity via curriculum anchors at Violet (the only post-delivery states we have):
+                          # those envs explore SOUTH and harvest Route-31/gatehouse cells, start envs explore
+                          # NORTH, and the shared frontier ratchets both fronts until the corridor connects.
+                          # (prior) RL v2.1: GENERALIST + FRONTIER (Go-Explore) reset, scaled to a ~2-day run.
+                          # agent_076 (cold, no frontier, 12 envs) CONFIRMED the Route-29 exploration wall:
+                          # nav/reach_cherrygrove flat 0.0 through 8.7M — 12-env brute force locks into the
+                          # wild-battle grind and never reaches Cherrygrove. Fix (per training_log agent_067):
+                          # manufacture state diversity via the frontier archive so 12 envs get the explorative
+                          # reach of many more — the "poor man's 40 envs". Same forward task (egg-delivered →
+                          # Violet → Falkner), exploration ON, COLD. WATCH the ~15M gate: nav/reach_cherrygrove
+                          # must rise (>=0.3-0.5) and nav/reach_route31 > 0, else abort and reseed/retune.
+
+# ── (076, superseded) RL v2 RE-BASELINE (Whidden-style): one GENERALIST from egg-delivered, no frontier,
+                          # 15M cold validation. Proved the Route-29 wall (above). Superseded by agent_077.
 
 # ── (075, superseded) PHASE 2 Run 6: STABILIZE the Falkner fight (learn THEN commit). 072 (lr 1e-4/ent
                           # 0.02) learned the win (badge 0.49) then DRIFTED into bad moves; 074 (lr 5e-5/ent
@@ -144,11 +182,14 @@ N_ENVS_CNN = 12               # PyBoy CPU-bound (16 cores) — 12 envs improves 
 # approach is exhausted. 058 relies on the start policy's OWN exploration (entropy schedule) + the
 # directional reset's southward income, warm from 053's pickup-100% base. No segregation possible.
 CURRICULUM_STATES_CNN = [
-    # agent_076 RL v2: ONE generalist from the egg-delivered state. The Route-30 north gate is already
-    # open in this save, so the full forward path (Elm Lab → Route 29 → Cherrygrove → Route 30 → gate →
-    # Route 31 → Violet gatehouse → Violet City → Gym → Falkner) is reachable. No curriculum, no
-    # backtracking: exploration + forward waypoints + the gym fight are the income.
-    ("saves/egg_delivered_clean.state", 12),
+    # agent_078 RL v2.2: BIDIRECTIONAL Go-Explore. Violet anchors (post-delivery) seed the forward end so
+    # the shared frontier has cells past the Route-29 bottleneck to expand from; egg_delivered_clean envs
+    # (the true deploy distribution) anchor the New Bark end. The last FRONTIER_N_ENVS(4) envs are the
+    # frontier resetters — they fall in the egg_delivered_clean block (ranks 8-11) and reset from the
+    # shared archive (spanning both ends). nav/ metrics = ranks 5-7 (pure New Bark start) = the success gate.
+    ("saves/violet_city.state",         3),   # ranks 0-2: Violet end — explore south, harvest Route31 cells
+    ("saves/violet_city_gym.state",     2),   # ranks 3-4: learn the Falkner fight (Totodile lv15)
+    ("saves/egg_delivered_clean.state", 7),   # ranks 5-11: true start; ranks 8-11 are the frontier envs
 ]
 
 # ── agent_059: Go-Explore / frontier reset (start-continuous). A fraction of resets restart from a
@@ -162,15 +203,20 @@ CURRICULUM_STATES_CNN = [
 # cold synthesis run uses it. Passed to the env via make_env.
 EGG_MARKER         = False       # agent_069: OFF — the carry specialist is single-mode (always carrying), no
                                  # pickup/carry separation needed.
-EXPLORATION_SCALE  = 1.0         # agent_076 (RL v2): RE-ENABLED — the generalist must NAVIGATE from Elm's lab to
-                                 # the gym, so the dense per-new-tile / new-map exploration reward is the primary
-                                 # driver again. (0.0 was the Phase-2 gym-only run that forbade leaving the gym.)
-FRONTIER_ENABLED   = False       # agent_069: OFF — pure fixed-start carry training, no Go-Explore reset.
-FRONTIER_SEED_FROM = "runs/frontier_archive/agent_065"  # agent_067: seed the (cleared) archive with these
+EXPLORATION_SCALE  = 4.0         # agent_079: BOOSTED 1.0→4.0 — at 1.0 the policy grinds Route 29 and never
+                                 # explores west (078 stalled). At 4.0 a new-MAP crossing pays +0.4 post (> a
+                                 # capped battle win), so progressing across the Route-29→Cherrygrove boundary
+                                 # out-earns grinding (Whidden's dense-exploration-primary recipe). Dial back
+                                 # later if it over-wanders past the gym. (1.0 = normal Phase-1 exploration.)
+FRONTIER_ENABLED   = True        # agent_077: ON — Go-Explore reset manufactures state diversity to break the
+                                 # Route-29 wall (12 envs alone can't; see training_log agent_067 seeding result).
+FRONTIER_SEED_FROM = None  # agent_077: NO seed — agent_065's seeds are carry-mode states from a DIFFERENT task.
+                           # (prior) "runs/frontier_archive/agent_065"  # agent_067: seed the (cleared) archive with these
                                   # carry-state save-states at launch, to bootstrap the stuck cold start with
                                   # state diversity. None = no seeding (normal). Marker applies at obs-time, so
                                   # 065's marker-less save-states are compatible.
-FRONTIER_N_ENVS    = 3            # agent_068: back to 3/9 (067's 6/6 collapsed pickup via carry-dominance).
+FRONTIER_N_ENVS    = 4            # agent_077: 4/12 frontier envs; the other 8 are pure-start so nav/ stays the
+                                 # clean success gate. (prior) agent_068: back to 3/9 (067's 6/6 collapsed pickup).
                                   # Seeding (not env count) is what bootstraps cold nav, so 3 seeded frontier
                                   # envs still supply diversity while 9 start envs protect pickup. agent_060: #
                                   # of DEDICATED frontier envs (rest are pure start). 059
@@ -208,7 +254,14 @@ ENT_COEF_CNN      = 0.02      # agent_075: SCHEDULE START. Explore the battle-me
 ENT_COEF_CNN_END  = 0.005     # agent_075: commit low after exploring the move
 ENT_ANNEAL_STEPS_CNN = 8_000_000   # agent_075: anneal 0.02→0.005 over the first 8M, then hold 0.005
 
-TOTAL_TIMESTEPS_CNN = 15_000_000    # agent_076: SHORT VALIDATION budget (~1.5h @ ~2700fps) — confirm the new
+TOTAL_TIMESTEPS_CNN = 20_000_000    # agent_082: 20M warm test of longer episodes (MAX_STEPS 131k).
+# (prior 081) ~2-day LONG run with the corridor-only exploration whitelist.
+# (prior) agent_080: SHORT VALIDATION of the off-path whitelist (warm from 079@130M).
+                                    # Watch nav/reach_route31 — if it cracks > 0, the cave-lure was the blocker →
+                                    # relaunch long (480M). (prior 480_000_000)
+                                    # agent_077: ~2-DAY run (@ ~2778 step/s). MONITOR the ~15M gate first and abort
+                                    # if nav/reach_cherrygrove is still flat-zero. (prior 15_000_000)
+                                    # agent_076: SHORT VALIDATION budget (~1.5h @ ~2700fps) — confirm the new
                                     # egg-delivered start + re-enabled exploration drive the forward journey
                                     # (rising nav/reach_cherrygrove, nav/reach_route31, non-zero exploration
                                     # reward, no instant deaths). If healthy, scale to a multi-day run by raising
@@ -221,7 +274,9 @@ TOTAL_TIMESTEPS_CNN = 15_000_000    # agent_076: SHORT VALIDATION budget (~1.5h 
                                     #   50M: nav/egg_delivered_rate ≥ 0.2, nav/reach_route31 > 0.1
                                     #  100M: nav/badge_rate > 0 (else if reach_gym > 0.3: bump gym damage
                                     #        3→5 and badge 30→50, warm-restart from the 100M checkpoint)
-CHECKPOINT_FREQ_CNN = 500_000       # agent_076: 500k → several frames across the short validation run so the
+CHECKPOINT_FREQ_CNN = 1_000_000     # agent_082: 1M for the warm test. (prior 5M agent_081)
+                                    # agent_077: 5M → ~96 checkpoints over 480M for the map-progression montage.
+                                    # (prior 500_000) agent_076: 500k → several frames across the short validation run so the
                                     # map-visualization montage can show the journey extending over training.
                                     # (prior 1_000_000) agent_075: 5M→1M to CAPTURE the badge_rate peak (072's transient 0.49 fell
                                     # between 5M-spaced saves). in TIMESTEPS — train_cnn divides by N_ENVS for the SB3 callback
@@ -231,7 +286,12 @@ CHECKPOINT_FREQ_CNN = 500_000       # agent_076: 500k → several frames across 
 # Warm-start for the REVERSE CURRICULUM: each stage fine-tunes from the PREVIOUS stage's *_final.zip.
 # Stage 1 starts from PPO_CNN_5_final (already knows New Bark → Cherrygrove → the gate area).
 # UPDATE this line between stages (see the table above). Set to None for a cold start.
-INIT_FROM_CHECKPOINT = None   # agent_076: COLD generalist. The old specialists (050, 072-075) were trained on
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_079/agent_079_129999792_steps.zip"   # agent_082: WARM from 079@130M
+                              # (reaches Route 30, SAME reward as now) → clean test of MAX_STEPS only.
+# (prior) None   # agent_081: COLD (clean test of the whitelist reward, no warm-start confound).
+# (prior) "runs/checkpoints/agent_079/agent_079_129999792_steps.zip"   # agent_080: WARM from 079@130M
+                              # (reaches Route 30) to quickly test whether the off-path whitelist unblocks Route 31.
+                              # (prior None) agent_076: COLD generalist. The old specialists (050, 072-075) were trained on
                               # isolated states (Falkner battle, carry-mode) and would bias navigation; the v2
                               # generalist learns the whole journey from scratch. (prior warm-starts below.)
 # (prior) "runs/checkpoints/agent_050/agent_050_9999984_steps.zip"  # agent_074: warm 050 (not a degraded 072 ckpt), low lr/ent from start to stabilize the fight.

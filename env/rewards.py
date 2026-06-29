@@ -70,6 +70,15 @@ VIOLET_GATEHOUSE = (26, 11)  # gate house between Route 31 and Violet City
 VIOLET_CITY      = (10, 5)   # Violet City main
 GYM_MAP          = (10, 7)   # Violet City Gym (Falkner)
 
+# agent_080: ONLY these on-corridor maps pay the EXPLORATION reward (new-tile + new-map). Off-path maps —
+# Dark Cave & other caves (bank 3), Sprout Tower / Pokémon School, houses, side routes — pay NOTHING, so
+# EXPLORATION_SCALE can't lure the agent into dead-end maps. Root cause of the agent_079 Route-31 plateau:
+# each cave floor / tower floor was a fresh "new map" worth +0.4 (at scale 4), diverting it off the path
+# (235 cave cells harvested!). Combat / level / heal / badge rewards are UNAFFECTED — the gym fight already
+# works (front/badge_rate ~0.7), so the agent still does everything once it is on the corridor.
+CORRIDOR_WHITELIST = {NEW_BARK, ROUTE_29, CHERRYGROVE, ROUTE_30_GATE, ROUTE_31,
+                      VIOLET_GATEHOUSE, VIOLET_CITY, GYM_MAP}
+
 # agent_065: the SOUTHERN DELIVERY CORRIDOR (Cherrygrove → Route29 → NewBark → Elm). Used for the dense
 # per-tile southward-carry pull (see compute_reward) — the fix for the carry-NAVIGATION wall (ESCALATION #3).
 SOUTH_CORRIDOR = {CHERRYGROVE, ROUTE_29, NEW_BARK, ELM_LAB}
@@ -171,11 +180,14 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
     # into a reward death-spiral (the frontier was never DISCOVERED, so the lifetime bonus never fired
     # there, while the re-tread reward was stripped away). CNN_7 fixes discovery via a small curriculum
     # instead. (`new_tile_lifetime` is still tracked by the env but unused here — kept for future use.)
-    if new_tile:
-        exploration += 0.02
+    # agent_080: exploration pays ONLY on-corridor (CORRIDOR_WHITELIST) — entering caves / Sprout Tower /
+    # houses / side routes earns nothing, so the agent isn't lured off the path to Falkner.
+    current_map = (ram_state["map_bank"], ram_state["map_number"])
+    on_corridor = current_map in CORRIDOR_WHITELIST
+    if new_tile:                        # agent_082: whitelist REVERTED (it hurt — stuck at Cherrygrove);
+        exploration += 0.02             # full exploration income is what powers path discovery.
 
     # ── Lifetime map milestone: small one-shot bonus the first time any map is entered
-    current_map = (ram_state["map_bank"], ram_state["map_number"])
 
     # ── agent_065: DENSE SMALL southward-carry pull (the ESCALATION #3 fix for carry-NAVIGATION). +0.05 for
     # each NEW (episode-scoped) tile visited while CARRYING the undelivered egg in the southern delivery
@@ -190,7 +202,7 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
         exploration += 0.05
     if current_map != (prev_state["map_bank"], prev_state["map_number"]):
         if current_map not in visited_maps:
-            exploration += 1.0
+            exploration += 1.0          # agent_082: whitelist reverted — all new maps pay again
             visited_maps.add(current_map)
         episode_maps.add(current_map)  # kept for compatibility
         # Per-episode directional breadcrumb (CNN_8): modest +2 the first time each forward waypoint is
