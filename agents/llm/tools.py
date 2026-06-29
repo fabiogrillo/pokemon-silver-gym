@@ -1,5 +1,12 @@
+from .perception import format_state_text
+from env.actions import ACTIONS
+
 BUTTONS = ("up", "down", "left", "right", "a", "b", "start", "select")
 DIRECTIONS = ("up", "down", "left", "right")
+
+# PyBoyWrapper.step() indexes ACTIONS by an integer (it serves the RL discrete action
+# space). Map our validated button/direction names back to that index.
+_BTN_INDEX = {name: i for i, name in enumerate(ACTIONS)}
 
 
 class ToolValidationError(Exception):
@@ -64,3 +71,32 @@ def validate_tool_call(name: str, args: dict, cfg) -> tuple[str, dict]:
         n = max(1, min(_coerce_int(args.get("n", 24)), 240))
         return "wait_frames", {"n": n}
     raise ToolValidationError(f"unknown tool: {name!r}")
+
+def _map_key(state):
+    return (state["map_bank"], state["map_number"])
+
+
+def execute_tool(name, args, wrapper, ram_reader, cfg) -> dict:
+    name, args = validate_tool_call(name, args, cfg)
+    if name == "get_state":
+        return {"ok": True, "note": format_state_text(ram_reader.read_all()),
+                "stopped_early": False}
+    if name == "wait_frames":
+        wrapper.pyboy.tick(count=args["n"])
+        return {"ok": True, "note": f"waited {args['n']} frames", "stopped_early": False}
+    if name == "press":
+        wrapper.step(_BTN_INDEX[args["button"]], n=cfg.frames_per_press)
+        return {"ok": True, "note": f"pressed {args['button']}", "stopped_early": False}
+    if name == "move":
+        start_map = _map_key(ram_reader.read_all())
+        taken, stopped = 0, False
+        for _ in range(args["steps"]):
+            wrapper.step(_BTN_INDEX[args["direction"]], n=cfg.frames_per_press)
+            taken += 1
+            s = ram_reader.read_all()
+            if _map_key(s) != start_map or s["battle_type"] > 0:
+                stopped = True
+                break
+        return {"ok": True, "note": f"moved {args['direction']} x{taken}",
+                "stopped_early": stopped}
+    return {"ok": False, "note": f"unhandled tool {name}", "stopped_early": False}
