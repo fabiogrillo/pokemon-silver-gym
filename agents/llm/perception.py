@@ -1,3 +1,32 @@
+import base64
+import io
+import numpy as np
+from PIL import Image
+
+
+def encode_screenshot(frame) -> str:
+    arr = np.asarray(frame)
+    if arr.shape[-1] == 4:        # RGBA → RGB (PyBoy screen has alpha)
+        arr = arr[:, :, :3]
+    img = Image.fromarray(arr.astype("uint8"), "RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def build_user_content(state: dict, frame, memory_note: str, send_image: bool) -> list:
+    text = format_state_text(state)
+    if memory_note:
+        text += "\n\n" + memory_note
+    content = [{"type": "text", "text": text}]
+    if send_image:
+        b64 = encode_screenshot(frame)
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        })
+    return content
+
 def format_state_text(state: dict) -> str:
     lines = [
         f"Map {state['map_bank']}-{state['map_number']} at ({state['local_x']}, {state['local_y']})",

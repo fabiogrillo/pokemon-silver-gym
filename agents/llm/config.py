@@ -21,18 +21,18 @@ class LLMConfig:
     """
     Configuration class for LLM agents.
     """
-    model: str = "qwen3-vl:8b", 
-    base_url: str = "https://localhost:11434/v1",
-    api_key: str = "ollama", 
-    rom_path: str = "pokemon_rom.gbc",
-    state_path: str = "saves?egg_delivered_clean.state",
-    max_step: int = 500,
-    token_budget: int = 400_000,
-    temperature: float = 0.73,
-    request_timeout: int = 120,
-    frames_per_press: int = 24,
-    move_max_steps: int = 10,
-    stuck_window: int = 8,
-    stuck_radius: int = 1,
-    send_image: bool = True,
+    model: str = "qwen3-vl:8b" 
+    base_url: str = "http://localhost:11434/v1"
+    api_key: str = "ollama"
+    rom_path: str = "pokemon_rom.gbc"
+    state_path: str = "saves/egg_delivered_clean.state"
+    max_steps: int = 500
+    token_budget: int = 400_000
+    temperature: float = 0.3
+    request_timeout: int = 120
+    frames_per_press: int = 24
+    move_max_steps: int = 10
+    stuck_window: int = 8
+    stuck_radius: int = 1
+    send_image: bool = True
     log_dir: str = "runs/llm_logs"
