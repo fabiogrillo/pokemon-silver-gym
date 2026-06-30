@@ -2129,3 +2129,155 @@ Backlog ordinato per impatto stimato. Da provare in questo ordine se Agent 013+ 
 |---------|-------|-------------|-----------------|-------|
 | **DataCrystal event tracking completo** | 🔲 da fare | Reward per ogni event flag da New Bark Town a Falkner. Gym trainer 1/2 flags da scoprire con `test_enemy_level.py start`. Nota: running shoes non esiste in Gen 2, Pokédex/Pokéball già coperti da ELM_BIT. | Alto | Medio (ricerca + verifica empirica) |
 | **Image-based observation** | 🔲 ultimo resort | Switch da MlpPolicy + vettore a CnnPolicy + screen (72×80 RGB) come PokemonRed. L'agente vede il gioco come un umano. | Molto alto | Molto alto — refactoring completo, 10× più compute |
+
+---
+
+## Agent 083 — GYM TASK (vertical slice for the RL-vs-LLM comparison)
+
+**Started 2026-06-29.** Scope pivot: instead of the full corridor (the characterized exploration
+wall), both RL and the LLM agent now target the **gym vertical slice** — start inside the Violet
+City Gym, navigate to Falkner, win the Zephyr Badge. This makes the comparison achievable for both.
+
+**Config (vs 082):**
+- `CURRICULUM_STATES_CNN = [("saves/violet_city_gym.state", 12)]` — all 12 envs start inside the gym.
+- `EXPLORATION_SCALE = 0.0` (anti-wander, per 071), `FRONTIER_ENABLED = False`.
+- `INIT_FROM_CHECKPOINT = agent_050@10M` (gym-capable base; 072 hit badge_rate 0.49 warming from it).
+- Hyperparams = 075's gym-stabilize settings (lr 7e-5, ent schedule 0.02→0.005 over 8M).
+- TensorBoard: `runs/agent_083_2`. Checkpoints: `runs/checkpoints/agent_083/` (every 1M steps).
+
+**Early observation (~0.5M steps):** `battles_won_mean ≈ 50`, `gym_trainers_mean` 0→1, but
+`badge_rate = 0`. The agent is wandering OUT of the gym to wild-grind battle wins instead of
+completing the Falkner fight — the documented 070-071 failure mode (win reward pays even with
+EXPLORATION_SCALE=0). Watching `front/badge_rate`: if it stays 0 past a few M steps, switch the
+start state to `saves/falkner_battle.state` (the 072 fix: forces the fight, no wander option), or
+mix gym + falkner_battle envs.
+
+**Result (20M, completed):** the warm-050 policy **transiently won** (peak ~5M steps), but the
+train-time `front/badge_rate` is MISLEADING — with 131k-step episodes few terminate per rollout, so
+a single badge-ending episode spikes it to 1.0. The honest **eval of the best checkpoint**
+(`agent_083_4999980_steps.zip`, the 5M peak) over 10 independent episodes from `violet_city_gym.state`
+gives **badge_rate = 10% (1/10)**: the agent wanders OUT of the gym (148-208 tiles, `end=step_cap` 9/10)
+and farms wild battles (51 W / 0 L) instead of reliably fighting Falkner. Pure-gym start lets it
+wander; documented fix (072) is to force the fight. **Lesson: never trust train-time badge_rate with
+long episodes — always eval.** Pivoting to agent_084 (mixed curriculum) per the user's pre-approval.
+
+**Best checkpoint:** `runs/checkpoints/agent_083/agent_083_4999980_steps.zip` (eval badge_rate 10%).
+
+---
+
+## Agent 084 — GYM TASK v2 (MIXED curriculum) — FAILED the gym-start task
+
+**2026-06-29.** Pivot from 083: `CURRICULUM_STATES_CNN = 6×violet_city_gym + 6×falkner_battle`
+(force the fight while keeping navigation), warm from `agent_083_4999980` (5M), 10M, EXPLORATION_SCALE=0,
+frontier off. Logs `runs/agent_084_2`, checkpoints `runs/checkpoints/agent_084/`.
+
+**Result — eval sweep from `violet_city_gym.state` (10 eps each):**
+| Checkpoint | Badge | Battles W/F/L |
+|---|---|---|
+| 4M  | 0% | 17/1/0 |
+| 7M  | 0% | 72/0/0 |
+| 10M | 0% | 121/0/0 |
+| final | 0% | 96/2/0 |
+
+**WORSE than 083 (which hit 10% @5M).** The mixed curriculum reinforced battle-winning competence,
+but from the gym START the agent wanders OUT and wild-grinds (121 wins/10 eps) instead of climbing to
+Falkner. **Root cause (diagnosed):** with `EXPLORATION_SCALE=0` there is NO reward gradient pulling the
+agent toward Falkner — tile income is off, and the gym-damage reward only fires INSIDE the Falkner
+battle (never reached). The win reward is already capped at 2/episode (rewards.py:285) so grinding
+doesn't *pay*, but with nothing pulling it up the gym, the agent just grabs its 2 capped wins nearby
+and wanders. Adding falkner_battle envs can't fix a missing NAVIGATION signal.
+
+**Recommended next step (reward engineering — user's call):** add a one-shot reward for *starting*
+the Falkner fight (enter `battle_type>0` on `GYM_MAP`) to bridge the navigation gap, OR restore a
+small gym-map-constrained exploration reward, OR accept the 072 pure-`falkner_battle.state` approach
+(badge ~0.49) as the RL "battle-competence" baseline and let the LLM own navigation+battle.
+
+**Best gym-start checkpoint to date:** `runs/checkpoints/agent_083/agent_083_4999980_steps.zip` (10%).
+
+---
+
+## Agent 085 — GYM TASK v3 (NEW "gym engage" reward) — BEST SO FAR (40% badge)
+
+**2026-06-30.** Added a one-shot "gym engage" reward (`rewards.py`): +2.0 (capped 3) on the RISING
+edge of a battle on `GYM_MAP`, supplying the navigation signal toward Falkner that 083/084 lacked.
+PURE 12×violet_city_gym (one-variable test vs 083), warm from `agent_083_4999980` (5M), 10M,
+EXPLORATION_SCALE=0, frontier off. Logs `runs/agent_085_2`.
+
+**Result — eval sweep from `violet_city_gym.state` (10 eps each):**
+| Checkpoint | Badge | Battles W/F/L |
+|---|---|---|
+| 2M | 10% | 14/1/0 |
+| 3M | 10% | 11/1/0 |
+| 4M | 0%  | 25/0/0 |
+| **5M (`agent_085_4999980`)** | **40% (4/10)** | 31/0/0 |
+| 7M | 0% | 57/0/0 |
+| 10M | 0% | 54/0/0 |
+| final | 0% | 74/0/0 |
+
+**The engage reward WORKED** — 40% badge at 5M, **4× better than 083 (10%)**, and the right early
+signature (battles_won≈3, gym_trainers=2 at ~3M = climbing the gym, not wandering). But the policy
+**drifts back to wandering/grinding after 5M** (battles_won 54-74, badge 0) — the same learn-then-drift
+instability as 083. Best checkpoint capped at 40%.
+
+**Best gym agent to date:** `runs/checkpoints/agent_085/agent_085_4999980_steps.zip` (**40% badge**).
+
+**Recommended next (to push toward reliable ≥0.7):** a 075-style STABILIZATION run — warm from
+085@5M, lower lr (7e-5→5e-5) + lower/flat entropy (stop the 0.02→0.005 anneal that keeps exploring
+off the winning policy), short (~5M). This should consolidate the 5M peak instead of drifting off it.
+
+---
+
+## Agent 086 — GYM TASK v4 (STABILIZATION) — FAILED to beat 085's 40%
+
+**2026-06-30.** Stabilization run to consolidate 085's 40% peak: warm from `agent_085_4999980`,
+lr 7e-5→5e-5, entropy LOW+FLAT (0.005, no anneal), pure 12×gym, engage reward kept, 5M.
+
+**Result — eval sweep from `violet_city_gym.state` (10 eps each):** 1M=0%, 2M=0%, **3M=20%, 4M=30%**,
+5M=0%, final=0%. **Best = 30% — WORSE than 085's 40%.** Even warm-starting from the 40% checkpoint,
+the policy drifted back to wander/grind (battles_won ~48-62 late). Lower lr/entropy slowed but did
+not prevent the drift.
+
+**Diagnosis (3 runs converge on it): the wander-grind basin is the STABLE ATTRACTOR of this reward
+landscape.** From `violet_city_gym.state` the agent CAN leave the gym; "exit + grab 2 capped wild
+wins" is an easy, reliable basin, while "climb the gym + beat 2 trainers + beat Falkner" is a long
+fragile sequence. Reward tweaks (engage reward: 10%→40%) and optimizer tweaks (stabilization: 30%)
+move the needle but can't break ~40% — it's STRUCTURAL.
+
+**Current RL baseline (best to date): `runs/checkpoints/agent_085/agent_085_4999980_steps.zip` = 40%.**
+
+**Recommended STRUCTURAL fix (next, needs user decision):** add a penalty for LEAVING `GYM_MAP`
+(or terminate the episode on leaving) so wandering out to grind is no longer an option — the agent
+is then forced to solve the gym. Alternatively accept 40% as the RL gym baseline for the RL-vs-LLM
+comparison and move to the LLM side.
+
+---
+
+## Agent 087 — GYM TASK v5 (STRUCTURAL FIX: confine-to-gym) — ✅ SOLVED (100% badge)
+
+**2026-06-30.** Structural fix: new env flag `CONFINE_TO_GYM` (gated, off for the corridor) ends the
+episode the moment the agent leaves `GYM_MAP` — removing the wander-grind OPTION that capped 083-086
+at ~40%. WARM from `agent_085_4999980` (40%), pure 12×gym, engage reward kept, lr 5e-5, flat entropy
+0.005, 5M. Logs `runs/agent_087_2`.
+
+**Result — eval sweep from `violet_city_gym.state` (10 eps each, eval env does NOT confine — honest test):**
+| Checkpoint | Badge | Avg steps | Battles W/F/L |
+|---|---|---|---|
+| 1M | 80% | 2468 | 27/0/1 |
+| 2M | 100% | 1167 | 30/0/0 |
+| 3M | 100% | 1052 | 30/0/0 |
+| 4M | 100% | 840 ± 29 | 30/0/0 |
+| 5M | 100% | 836 ± 23 | 30/0/0 |
+| **final** | **100% (10/10)** | **839 ± 24** | **30/0/0** |
+
+**SOLVED.** 40% → **100% badge**, reliable (10/10), efficient (~840 steps), zero losses, and STABLE
+(no drift — the confinement holds the policy). The eval env does NOT confine, so the agent genuinely
+learned to STAY in the gym and beat Falkner without the training crutch. `battles W/F/L = 30/0/0` =
+exactly 3 per episode (2 bird-keepers + Falkner) — it does the clean gym sequence, no grinding.
+
+**RL GYM AGENT (deliverable for the RL-vs-LLM comparison): `runs/checkpoints/agent_087/agent_087_final.zip`
+— badge_rate 100%, ~840 steps/episode.**
+
+**The arc (the lesson):** 083 pure-gym 10% → 084 mixed 0% → 085 +engage-reward 40% → 086 stabilization
+30% → 087 +confinement **100%**. Reward/optimizer tweaks couldn't break the wander-grind basin; the fix
+was STRUCTURAL — remove the bad option from the state space. Also reaffirmed: train-time badge_rate is
+noisy with long episodes; always validate by eval.

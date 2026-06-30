@@ -308,6 +308,19 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
         if delta > 0:
             events += 3.0 * delta
 
+    # ── Gym ENGAGE reward (agent_085): one-shot for STARTING a battle inside Falkner's gym — bridges
+    # the navigation gap that sank 083/084. With exploration off, NOTHING pulled the agent UP to Falkner
+    # (tile income off; the gym-damage reward only fires once already in a gym battle), so it wandered
+    # out and grabbed its 2 capped wild wins. This rewards the RISING EDGE of a battle on GYM_MAP — the
+    # 2 bird-keepers + Falkner are all up the path — capped at 3 so it pulls navigation without becoming
+    # a grind. MAP-CONSTRAINED: wild battles on other maps don't qualify (PPO_16 lesson).
+    if (reward_maxes is not None
+            and current_map == GYM_MAP
+            and prev_state["battle_type"] == 0 and ram_state["battle_type"] > 0
+            and reward_maxes["gym_engaged"] < 3):
+        events += 2.0
+        reward_maxes["gym_engaged"] += 1
+
     # Removed for good (see training_log.md "Ruled out"): per-episode mega-waypoints, global wild-battle
     # penalty, flat step penalty, catch-pokemon bonus, big one-shot map milestones.
 
@@ -352,6 +365,7 @@ def make_reward_maxes(ram_state):
         "rival_done":     False,
         "mrpokemon_done": False,
         "wins_rewarded":  0,
+        "gym_engaged":    0,   # agent_085: one-shot gym-battle engage counter (cap 3: 2 trainers + Falkner)
         # Pre-seed with the start map if it is itself a waypoint, so a stage that BEGINS on a waypoint
         # doesn't reward re-entering it (only genuinely NEW forward waypoints pay).
         "waypoints":      {start_map} if start_map in WAYPOINT_REWARDS else set(),

@@ -7,9 +7,16 @@
 ## Goal
 
 Build a local, text+vision LLM agent that plays Pokémon Silver through the same shared
-environment as the RL agent, with the same win condition: navigate from the
-*egg-delivered* state (`saves/egg_delivered_clean.state`) through Elm's Lab → Cherrygrove →
-Route 30/31 → Violet City and **beat Gym Leader Falkner for the Zephyr Badge**.
+environment as the RL agent, with the same win condition: **beat Gym Leader Falkner for the
+Zephyr Badge**.
+
+**Scope (pivoted 2026-06-29):** the **primary milestone** is the *gym vertical slice* — start
+inside the Violet City Gym (`saves/violet_city_gym.state`), navigate up to Falkner, and win the
+battle. This makes the RL-vs-LLM comparison achievable for **both** agents: RL can actually reach
+a badge from the gym (it hit an exploration wall on the full corridor), and the LLM keeps the
+part it is strong at (battle reasoning, à la PokéLLMon) while shedding the overworld-navigation
+wall it struggled with. The **full corridor** (egg-delivered → Cherrygrove → Route 30/31 → Violet
+→ Falkner) is retained as a **stretch goal** / "hard mode" narrative section, not a blocker.
 
 The agent reasons in a ReAct loop, perceives the game as **text (RAM→prompt) + a screenshot**,
 and acts through a small set of tools. It is evaluated with the same metrics as the RL agent so
@@ -27,7 +34,7 @@ the two can be compared quantitatively (the spine of the eventual blog post).
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| First milestone | Full corridor navigation (egg-delivered → Falkner) | Direct 1:1 comparison with RL v2 |
+| First milestone | **Gym vertical slice** (start in gym `violet_city_gym.state` → reach Falkner → win) | Achievable for BOTH agents; corridor kept as stretch goal |
 | Perception | Text (RAM→prompt) + screenshot (vision) | Most "human-like"; strong blog narrative |
 | Action granularity | Hybrid: macros in overworld, single button in battle | Macros cut LLM calls 10–50× (run feasible); single-button in battle where each decision matters |
 | Mode switching | Driven by `battle_type` (RAM `0xD116`) | Deterministic, no fragile heuristics |

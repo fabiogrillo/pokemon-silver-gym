@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 
 GOAL = (
-    "You are playing Pokémon Silver. Starting from Elm's Lab area (the egg is already "
-    "delivered), navigate through Cherrygrove City, Route 30/31, into Violet City, enter "
-    "the Gym, and defeat Gym Leader Falkner to earn the Zephyr Badge. Make steady progress "
-    "toward Violet City; do not wander backward."
+     "You are inside the Violet City Gym. "
+     "Move UP through the gym to reach Gym Leader Falkner at the top, "
+     "then defeat him in battle to earn the Zephyr Badge. "
+     "Falkner uses Flying-type Pokémon (Pidgey, Pidgeotto) — "
+     "they are weak to Electric and Rock attacks."
 )
 
 SYSTEM_PROMPT = (
@@ -25,9 +26,9 @@ class LLMConfig:
     base_url: str = "http://localhost:11434/v1"
     api_key: str = "ollama"
     rom_path: str = "pokemon_rom.gbc"
-    state_path: str = "saves/egg_delivered_clean.state"
+    state_path: str = "saves/violet_city_gym.state"
     max_steps: int = 500
-    token_budget: int = 400_000
+    token_budget: int = 4_000_000
     temperature: float = 0.3
     request_timeout: int = 120
     frames_per_press: int = 24

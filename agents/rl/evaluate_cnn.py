@@ -24,7 +24,7 @@ from env.pokemon_env_cnn import PokemonEnvCNN
 from agents.rl import config
 
 
-def build_vec_env(state_path: str, gif_dir: str | None, watch: bool):
+def build_vec_env(state_path: str, gif_dir: str | None, watch: bool, speed: int = 0):
     """Build the same wrapper stack used in training, minus VecNormalize.
 
     If watch=True, the underlying PyBoy opens an SDL2 window so you can see
@@ -43,6 +43,9 @@ def build_vec_env(state_path: str, gif_dir: str | None, watch: bool):
             gif_every_n_episodes=1 if gif_dir else 10**9,
             gif_prefix="eval",
         )
+        # Throttle the emulator so a watched run is viewable (0 = unbounded, 1 = realtime, 2 = 2×).
+        if watch and speed > 0:
+            e.pyboy.pyboy.set_emulation_speed(speed)
         ref.append(e)
         return e
 
@@ -58,7 +61,8 @@ WAYPOINT_NAMES = ["start", "cherrygrove", "route30_gate", "route31", "violet", "
 
 def evaluate(model_path: str, n_episodes: int, state_path: str,
              deterministic: bool, gif_dir: str | None,
-             watch: bool, max_steps: int | None, log_path: str | None = None):
+             watch: bool, max_steps: int | None, log_path: str | None = None,
+             speed: int = 0):
     if not torch.cuda.is_available():
         print("[device] CUDA not available — CNN inference on CPU will be slow but works.")
         device = "cpu"
@@ -75,7 +79,7 @@ def evaluate(model_path: str, n_episodes: int, state_path: str,
     print(f"[eval] max_steps: {max_steps or 'env default'}")
     print()
 
-    vec, underlying = build_vec_env(state_path, gif_dir, watch)
+    vec, underlying = build_vec_env(state_path, gif_dir, watch, speed)
     model = PPO.load(model_path, env=vec, device=device)
 
     results = []
@@ -203,6 +207,8 @@ if __name__ == "__main__":
                         help="Capture a GIF per episode under runs/eval_gifs/")
     parser.add_argument("--watch", action="store_true",
                         help="Open SDL2 window to watch the agent play live")
+    parser.add_argument("--speed", type=int, default=2,
+                        help="Emulation speed when --watch (0=unbounded, 1=realtime, 2=2x). Default 2.")
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Truncate each episode after N steps (useful with --watch for quick previews)")
     parser.add_argument("--log", nargs="?", const="auto", default=None,
@@ -224,4 +230,4 @@ if __name__ == "__main__":
             log_path = args.log
 
     evaluate(args.model, args.episodes, args.state, args.deterministic,
-             gif_dir, args.watch, args.max_steps, log_path)
+             gif_dir, args.watch, args.max_steps, log_path, args.speed)
