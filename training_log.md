@@ -2281,3 +2281,34 @@ exactly 3 per episode (2 bird-keepers + Falkner) — it does the clean gym seque
 30% → 087 +confinement **100%**. Reward/optimizer tweaks couldn't break the wander-grind basin; the fix
 was STRUCTURAL — remove the bad option from the state space. Also reaffirmed: train-time badge_rate is
 noisy with long episodes; always validate by eval.
+
+---
+
+## LLM agent — gym slice (2026-07-01)
+
+**Setup:** local `qwen3-vl:8b` via Ollama, ReAct loop (RAM text + screenshot each turn), tools
+`move`/`press`/`get_state`/`wait_frames`, from `saves/violet_city_gym.state` (map `(10,7)`).
+
+**Result: fights but does not navigate. Badge rate 0% (RL is 100%).** The agent reliably starts and
+wins the first bird-keeper battle (mash `a`), but never climbs to Falkner — it fixates at junctions and
+funnels toward the gym exit.
+
+Debug arc (systematic-debugging; each bug masked the next):
+- **`settle` frames** (`pyboy_wrapper.step(settle=)`, LLM passes 24; RL default 0): consecutive presses
+  had no released-button gap → no distinct button-down *edges* → dialogue/trainer scripts never
+  advanced. Empirically ≥16 frames needed; without it, NO battle ever started.
+- **Empty-response fallback** (`agent.py`): qwen3-vl returns an empty completion ~30–40% of steps;
+  doing nothing self-perpetuates (same screen → same empty reply). Fallback: press `a`.
+- **Walkability probe + anti-fixation guardrail** (`agent.py`): save/restore 4-dir probe reports which
+  moves actually change position; a direction that failed to move is blacklisted for that tile. Broke
+  the "push into a wall / A-spam" loops.
+- **Gym confinement** (mirrors RL `CONFINE_TO_GYM`): undo any action that leaves map `(10,7)`. Needed a
+  ROBUST restore — the naive `load_state(pre_snap)+tick(1)` intermittently *re-fired* a pending door
+  warp (found via `[CONFINE] restored=False` logging). Fix: snapshot BEFORE the probe (clean resting
+  state) + a verified in-gym anchor fallback + retry. Final run: 0 restore failures, map stayed
+  `(10,7)`, 73 exits blocked — yet the agent still bounced at the door, `tiles` frozen, `won=1`.
+
+**Lesson:** same shape as the RL fix (remove the bad option structurally), but structure alone isn't
+enough for the LLM — it lacks a spatial compass to the goal. RL internalizes goal geometry via
+trial-and-error; the local vision LLM reasons in text but can't convert that into sustained navigation.
+This IS the headline RL-vs-LLM result. Full arc: `docs/superpowers/plans/2026-06-29-llm-agent.md`.

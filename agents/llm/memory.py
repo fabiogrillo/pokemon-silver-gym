@@ -33,6 +33,7 @@ class ShortTermMemory:
         )
         note = f"Recent actions: {recent}" if recent else ""
         if self.is_stuck():
-            note += ("\nWARNING: you have not moved for several turns — you are stuck against "
-                     "an obstacle. Try a DIFFERENT direction than your recent ones.")
+            note += ("\nWARNING: you have not moved for several turns. Follow the 'Walkable "
+                     "directions' below: MOVE in one of them (toward the top of the gym). If they "
+                     "are NONE, a trainer is blocking you — press 'a' repeatedly to start the battle.")
         return note

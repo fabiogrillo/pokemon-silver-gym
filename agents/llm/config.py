@@ -11,10 +11,18 @@ GOAL = (
 SYSTEM_PROMPT = (
     "You are an agent that plays Pokémon Silver by calling tools. On every turn you receive "
     "the current game state as text and a screenshot. Think briefly about the best next action, "
-    "then call exactly ONE tool. In the overworld, prefer the `move` tool to travel several "
-    "tiles at once toward your goal. In battle, use `press` one button at a time. Use `press(\"a\")` "
-    "to talk to people, confirm menus, and advance dialogue. If you seem stuck, change direction. "
-    "Always call a tool; never answer with prose only.\n\n" + GOAL
+    "then call exactly ONE tool. In battle, use `press` one button at a time. "
+    "Always call a tool; never answer with prose only.\n\n" +
+    "NAVIGATION: each overworld turn you are told the 'Walkable directions from here'. To reach "
+    "Falkner, use the `move` tool in a walkable direction that takes you toward the TOP of the gym "
+    "(prefer up; if up is not walkable, go around via a walkable direction such as right or left, "
+    "then up). NEVER repeatedly move into a non-walkable direction. You cannot leave the gym — "
+    "never head for the exit/door at the bottom; your only path is UP toward Falkner.\n\n" +
+    "TRAINERS: when the walkable directions are NONE while you are NOT in battle, a trainer is "
+    "blocking your path and is about to battle you — press 'a' REPEATEDLY (it can take ~10 presses) "
+    "to advance the dialogue until the battle starts. Once a battle ENDS, go back to navigating: "
+    "MOVE toward Falkner — do not keep pressing 'a'. "
+    + GOAL
 )
 
 @dataclass
@@ -32,6 +40,7 @@ class LLMConfig:
     temperature: float = 0.3
     request_timeout: int = 120
     frames_per_press: int = 24
+    settle_frames: int = 24   # idle frames after each press so dialogue/script advances (>=16 needed)
     move_max_steps: int = 10
     stuck_window: int = 8
     stuck_radius: int = 1

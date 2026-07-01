@@ -17,11 +17,18 @@ class PyBoyWrapper:
             print(f"Failed to load state from {state_path}: {e}")
             print("Insert a valid path for the save file.")
 
-    def step(self, action, n=24):
-        """Press the button for `action`, advance `n` frames, release. Returns the screen."""
+    def step(self, action, n=24, settle=0):
+        """Press the button for `action`, advance `n` frames, release, then idle `settle` frames.
+
+        settle>0 leaves the button released for `settle` frames so consecutive presses produce
+        distinct button-down edges, which dialogue/trainer-script advancement requires. Default 0
+        keeps the RL caller's timing unchanged.
+        """
         self.pyboy.button_press(ACTIONS[action])
         self.pyboy.tick(count=n)
         self.pyboy.button_release(ACTIONS[action])
+        if settle:
+            self.pyboy.tick(count=settle)
         return self.pyboy.screen.ndarray
 
     def reset(self):

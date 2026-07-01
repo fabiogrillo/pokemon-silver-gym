@@ -85,7 +85,7 @@ def execute_tool(name, args, wrapper, ram_reader, cfg) -> dict:
         wrapper.pyboy.tick(count=args["n"])
         return {"ok": True, "note": f"waited {args['n']} frames", "stopped_early": False}
     if name == "press":
-        wrapper.step(_BTN_INDEX[args["button"]], n=cfg.frames_per_press)
+        wrapper.step(_BTN_INDEX[args["button"]], n=cfg.frames_per_press, settle=cfg.settle_frames)
         return {"ok": True, "note": f"pressed {args['button']}", "stopped_early": False}
     if name == "move":
         start_map = _map_key(ram_reader.read_all())

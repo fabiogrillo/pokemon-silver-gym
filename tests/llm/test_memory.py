@@ -24,4 +24,7 @@ def test_render_note_warns_when_stuck():
     for x in [5, 6, 5, 6]:
         m.record(_pos(x, 8), "t", "move", {"direction": "left", "steps": 1}, "ok")
     note = m.render_note()
-    assert "stuck" in note.lower()
+    # the stuck warning no longer uses the word "stuck"; it now steers toward the walkable
+    # directions (or pressing 'a' at a trainer) — assert the warning fires and gives direction.
+    assert "warning" in note.lower()
+    assert "not moved" in note.lower()

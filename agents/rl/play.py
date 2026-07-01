@@ -1,10 +1,10 @@
 """
-Play a pretrained generalist from the egg-delivered state and report its journey toward Falkner.
+Play a pretrained checkpoint and report its journey toward Falkner (default: the gym agent).
 
 This is the Dockerized demo entrypoint (see /Dockerfile): it loads a checkpoint, runs one (or a few)
-episodes from saves/egg_delivered_clean.state, prints the milestones reached (waypoints, trainers,
-badge), and optionally writes the map-trajectory overlay (agents/rl/visualize_map) and a watchable
-gameplay GIF (agents/rl/make_gif).
+episodes from a save state (default saves/violet_city_gym.state via the STATE env var), prints the
+milestones reached (waypoints, trainers, badge), and optionally writes the map-trajectory overlay
+(agents/rl/visualize_map) and a watchable gameplay GIF (agents/rl/make_gif).
 
 The ROM is NOT bundled in the image (legal reasons) — mount it at runtime. Inference runs fine on CPU.
 
