@@ -7,6 +7,7 @@ import json
 import os
 import time
 import argparse
+import imageio.v3 as iio
 from .config import LLMConfig
 from .agent import ReActAgent
 from env.pyboy_wrapper import PyBoyWrapper
@@ -19,19 +20,27 @@ def main():
     path = os.path.join(cfg.log_dir, f"run_{int(time.time())}.jsonl")
     ap = argparse.ArgumentParser()
     ap.add_argument("--watch", action="store_true", help="open PyBoy window + print reasonings")
+    ap.add_argument("--record-dir", default=None,
+                    help="also save one PNG per step (frame_00000.png ...) for montage footage")
     args = ap.parse_args()
     
     wrapper = PyBoyWrapper(cfg.rom_path, cfg.state_path, headless=not args.watch)
     reader = RAMReader(wrapper.pyboy)
 
+    if args.record_dir:
+        os.makedirs(args.record_dir, exist_ok=True)
+
     with open(path, "w", buffering=1) as f:
-        def on_step(step, state, out, obs):
+        def on_step(step, state, out, obs, frame):
             if args.watch:
                 thought = out["thought"] or "(no reasoning text)"
                 print(f"[{step}] {thought}\n -> {out['tool_name']}({out['args']}) | "
                       f"{obs['note']} map {state['map_bank']}-{state['map_number']} "
                       f"@({state['local_x']},{state['local_y']}) "
                       f"battle={state['battle_type']} tokens={out['tokens']}")
+            if args.record_dir:
+                iio.imwrite(os.path.join(args.record_dir, f"frame_{step:05d}.png"),
+                            frame[:, :, :3])
             f.write(json.dumps({
                 "step": step, "map": [state["map_bank"], state["map_number"]],
                 "pos": [state["local_x"], state["local_y"]], "battle": state["battle_type"],

@@ -159,7 +159,7 @@ class ReActAgent:
             prev_xy = cur_xy
             last_move = args.get("direction") if name == "move" else None
             if on_step:
-                on_step(step, state, out, obs)
+                on_step(step, state, out, obs, frame)
 
         return {"badge": reader.read_all()["zephyr"], "steps": step + 1, "tokens": tokens,
                 "battles_won": battles_won, "tiles": len(tiles), "stopped": stopped}
