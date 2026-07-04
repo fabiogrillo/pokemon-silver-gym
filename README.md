@@ -213,7 +213,8 @@ docker run --rm \
 - [x] **RL gym slice solved** — `agent_087`, 100% badge from `violet_city_gym.state` (`training_log.md`)
 - [x] **LLM agent** — vision + ReAct + tool-calling over Ollama (`qwen3-vl:8b`), 21 tests green
 - [~] LLM gym slice: **wins battles but does not navigate to Falkner** — the RL-vs-LLM finding (documented)
-- [~] Evaluation/comparison suite (RL vs LLM) + writeup — eval harness + comparison table
+- [x] Evaluation/comparison suite (RL vs LLM) — `evaluate_llm.py` + `comparison.py` (24 tests green)
+- [ ] Final writeup / blog + video
 - [ ] Full New Bark → Violet corridor — stretch goal (open research problem)
 
 ---
