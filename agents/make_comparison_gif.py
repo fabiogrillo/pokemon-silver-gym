@@ -82,3 +82,59 @@ def compose_frame(rl_frame: np.ndarray, llm_frame: np.ndarray,
         draw.text((rx, y), line, fill=(230, 230, 230), font=caption_font)
         y += 22
     return np.asarray(canvas, dtype=np.uint8)
+
+
+def load_frames(dir_path: str, start: int, end: int) -> list:
+    frames = []
+    for i in range(start, end):
+        path = os.path.join(dir_path, f"frame_{i:05d}.png")
+        if os.path.exists(path):
+            frames.append(iio.imread(path)[:, :, :3])
+    return frames
+
+
+def resample(frames: list, target_len: int) -> list:
+    idx = np.linspace(0, len(frames) - 1, target_len).round().astype(int)
+    return [frames[i] for i in idx]
+
+
+def build_montage(segments: list, rl_dir: str, llm_dir: str, fps: int) -> list:
+    out = []
+    for seg in segments:
+        n = int(round(seg["seconds"] * fps))
+        rl = resample(load_frames(rl_dir, *seg["rl"]), n)
+        llm = resample(load_frames(llm_dir, *seg["llm"]), n)
+        caption = wrap_caption(shorten_thought(seg.get("caption", "")))
+        out.extend(compose_frame(r, l, caption) for r, l in zip(rl, llm))
+    return out
+
+
+def export(frames: list, out_base: str, fps: int) -> None:
+    os.makedirs(os.path.dirname(out_base) or ".", exist_ok=True)
+    gif_path, mp4_path = out_base + ".gif", out_base + ".mp4"
+    iio.imwrite(gif_path, np.stack(frames), plugin="pillow", loop=0,
+                duration=int(round(1000 / fps)))
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", gif_path,
+         "-movflags", "+faststart", "-pix_fmt", "yuv420p", mp4_path],
+        check=True,
+    )
+    for p in (gif_path, mp4_path):
+        print(f"[montage] wrote {p} ({os.path.getsize(p) / 1e6:.1f} MB)")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--segments", required=True, help="segments JSON (fps, segments[])")
+    ap.add_argument("--rl-dir", default="runs/comparison_footage/rl")
+    ap.add_argument("--llm-dir", default="runs/comparison_footage/llm")
+    ap.add_argument("--out", default="assets/comparison", help="output basename (no extension)")
+    args = ap.parse_args()
+    with open(args.segments) as f:
+        spec = json.load(f)
+    frames = build_montage(spec["segments"], args.rl_dir, args.llm_dir, spec.get("fps", 10))
+    export(frames, args.out, spec.get("fps", 10))
+
+
+if __name__ == "__main__":
+    main()

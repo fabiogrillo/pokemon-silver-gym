@@ -1,7 +1,8 @@
 import numpy as np
+import imageio.v3 as iio
 from agents.make_comparison_gif import (
     shorten_thought, wrap_caption, upscale2x, compose_frame,
-    CANVAS_W, CANVAS_H,
+    CANVAS_W, CANVAS_H, load_frames, resample, build_montage,
 )
 
 
@@ -37,3 +38,35 @@ def test_compose_frame_shape_and_even_dims():
     assert canvas.shape == (CANVAS_H, CANVAS_W, 3)
     assert CANVAS_W % 2 == 0 and CANVAS_H % 2 == 0  # ffmpeg yuv420p
     assert canvas.dtype == np.uint8
+
+
+def _write_frames(dir_path, n):
+    dir_path.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        frame = np.full((144, 160, 3), i * 10 % 255, dtype=np.uint8)
+        iio.imwrite(str(dir_path / f"frame_{i:05d}.png"), frame)
+
+
+def test_load_frames_range_and_missing_ok(tmp_path):
+    _write_frames(tmp_path / "f", 5)
+    frames = load_frames(str(tmp_path / "f"), 1, 8)  # 8 > available: skip missing
+    assert len(frames) == 4
+    assert frames[0].shape == (144, 160, 3)
+
+
+def test_resample_stretches_and_shrinks():
+    frames = [np.full((1, 1, 3), i, dtype=np.uint8) for i in range(4)]
+    assert len(resample(frames, 8)) == 8
+    shrunk = resample(frames, 2)
+    assert len(shrunk) == 2
+    assert shrunk[0][0, 0, 0] == 0 and shrunk[-1][0, 0, 0] == 3  # keeps endpoints
+
+
+def test_build_montage_lengths_and_shape(tmp_path):
+    _write_frames(tmp_path / "rl", 6)
+    _write_frames(tmp_path / "llm", 3)
+    segments = [{"seconds": 1, "rl": [0, 6], "llm": [0, 3], "caption": "hello"}]
+    frames = build_montage(segments, str(tmp_path / "rl"), str(tmp_path / "llm"), fps=4)
+    assert len(frames) == 4  # 1 s * 4 fps
+    from agents.make_comparison_gif import CANVAS_H, CANVAS_W
+    assert frames[0].shape == (CANVAS_H, CANVAS_W, 3)
