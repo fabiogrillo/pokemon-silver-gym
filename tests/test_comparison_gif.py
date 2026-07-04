@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import imageio.v3 as iio
 from agents.make_comparison_gif import (
     shorten_thought, wrap_caption, upscale2x, compose_frame,
@@ -70,3 +71,11 @@ def test_build_montage_lengths_and_shape(tmp_path):
     assert len(frames) == 4  # 1 s * 4 fps
     from agents.make_comparison_gif import CANVAS_H, CANVAS_W
     assert frames[0].shape == (CANVAS_H, CANVAS_W, 3)
+
+
+def test_build_montage_empty_range_raises_clear_error(tmp_path):
+    _write_frames(tmp_path / "rl", 3)
+    (tmp_path / "llm").mkdir()
+    segments = [{"seconds": 1, "rl": [0, 3], "llm": [10, 20], "caption": "x"}]
+    with pytest.raises(ValueError, match="llm"):
+        build_montage(segments, str(tmp_path / "rl"), str(tmp_path / "llm"), fps=4)

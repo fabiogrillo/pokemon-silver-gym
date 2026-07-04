@@ -102,8 +102,14 @@ def build_montage(segments: list, rl_dir: str, llm_dir: str, fps: int) -> list:
     out = []
     for seg in segments:
         n = int(round(seg["seconds"] * fps))
-        rl = resample(load_frames(rl_dir, *seg["rl"]), n)
-        llm = resample(load_frames(llm_dir, *seg["llm"]), n)
+        rl_frames = load_frames(rl_dir, *seg["rl"])
+        if not rl_frames:
+            raise ValueError(f"rl segment range {seg['rl']} yielded no frames in {rl_dir}")
+        llm_frames = load_frames(llm_dir, *seg["llm"])
+        if not llm_frames:
+            raise ValueError(f"llm segment range {seg['llm']} yielded no frames in {llm_dir}")
+        rl = resample(rl_frames, n)
+        llm = resample(llm_frames, n)
         caption = wrap_caption(shorten_thought(seg.get("caption", "")))
         out.extend(compose_frame(r, l, caption) for r, l in zip(rl, llm))
     return out
