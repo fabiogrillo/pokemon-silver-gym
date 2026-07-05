@@ -94,9 +94,36 @@ NewBarkTown, which ends up furthest south-east -- matching the brief's expected 
 
 Interiors (Elm's lab, the gym, the Route31/Violet gatehouse, Mr. Pokemon's house, Dark Cave) are not
 overworld maps connected via the `connection` macro, so they are hand-placed as small `inset=True`
-boxes tucked into a visually empty area near their parent overworld map. Their exact placement will
-be fine-tuned against the real stitched image in Task 3 -- for now they only need to (a) be flagged
-inset=True and (b) have non-negative offsets so they render on-canvas.
+boxes tucked into a visually empty area near their parent overworld map. Their exact placement is
+final as of Task 3: each box was picked (via an exhaustive scan of assets/maps/johto_full.png for
+all-white/blank pixel rectangles near its parent map) to land on empty canvas within the corridor
+crop, not on top of real map art, since a later task renders them as labeled boxes.
+
+─────────────────────────────────────────────────────────────────────────────
+Task 3 -- ANCHOR_PX measurement.
+
+ANCHOR_PX (the image pixel of global tile (0,0), i.e. Violet City's NW corner) was found by an
+exhaustive search rather than eyeballing: for every candidate anchor on a 16 px (1 tile) grid, all
+6 overworld boxes above were projected onto assets/maps/johto_full.png and scored by the fraction of
+non-white pixels each box covers (via an integral image over a white-pixel mask). Exactly one anchor,
+(3200, 2016), scores a perfect 1.0 on all 6 boxes simultaneously (every single pixel of all 6 boxes
+is real map art) -- an unambiguous, non-eyeballed fit. Visual inspection confirms each box's content
+matches its real map: Violet City has a GYM/MART/POKE CENTER + Sprout Tower; Route 31 has grass, a
+pond and a lone house; Route 30 is a tall vertical route with two houses; Cherrygrove City has a
+MART/POKE CENTER with no gym; Route 29 has a single house; New Bark Town is four small houses with
+no gym/mart.
+
+NOTE (pre-existing bug, out of this task's scope): env/ram_reader.py's `local_x`/`local_y` fields are
+swapped relative to their names. Per pokecrystal's ram/wram.asm, the bytes following wMapNumber are
+laid out wYCoord THEN wXCoord (0xDA02 = Y, 0xDA03 = X), but ram_reader.py labels 0xDA02 "local_x" and
+0xDA03 "local_y". This was confirmed both from source (wram.asm ordering) and empirically: every
+landmark save state's marker lands exactly on its expected walkable tile only when local_x/local_y
+are swapped before being passed to `to_image_px`; with the as-labeled order, 3 of 7 landmark states
+even produce a local coordinate that overflows past their own map's tile bounds (impossible if it
+were really that axis). `env/` must not change for this task, so tests/verify_map_calibration.py
+swaps the two fields at its call site as a documented workaround -- `to_image_px` itself and
+env/ram_reader.py are unmodified. Any other consumer of RAMReader's local_x/local_y (e.g.
+visualize_map.py) inherits this same pre-existing swap and should account for it when fixed upstream.
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -129,25 +156,27 @@ MAP_INFO: dict[tuple[int, int], MapBox] = {
     (24, 3):  MapBox("Route 29",         offset=(90, 90), size=(60, 18), color=(80, 95, 70)),
     (24, 4):  MapBox("New Bark Town",    offset=(150, 90), size=(20, 18), color=(70, 100, 80)),
 
-    # ---- interiors (hand-placed insets, tucked near their parent; refined in Task 3) ----
-    (10, 7):  MapBox("Falkner's Gym",    offset=(14, 14), size=(8, 8),
-                      color=(120, 80, 70), inset=True),   # inside Violet City's box (0,0)-(40,36)
-    (26, 11): MapBox("Violet Gatehouse", offset=(42, 20), size=(6, 6),
-                      color=(90, 90, 70), inset=True),    # near Route 31's west edge (Violet border)
-    (26, 10): MapBox("Mr. Pokemon's",    offset=(64, 60), size=(8, 8),
-                      color=(90, 90, 70), inset=True),    # along Route 30
-    (24, 5):  MapBox("Elm's Lab",        offset=(154, 94), size=(8, 8),
-                      color=(110, 90, 120), inset=True),  # inside New Bark Town's box
-    (3, 70):  MapBox("Dark Cave",        offset=(200, 150), size=(10, 10),
-                      color=(50, 50, 60), inset=True),    # off-path, placed clear of the corridor
+    # ---- interiors (hand-placed insets; positions final as of Task 3, see derivation block above) ----
+    (10, 7):  MapBox("Falkner's Gym",    offset=(20, 36), size=(8, 8),
+                      color=(120, 80, 70), inset=True),   # blank strip just south of Violet City
+    (26, 11): MapBox("Violet Gatehouse", offset=(40, 6), size=(6, 6),
+                      color=(90, 90, 70), inset=True),    # blank strip north of Route 31/Violet border
+    (26, 10): MapBox("Mr. Pokemon's",    offset=(82, 60), size=(8, 8),
+                      color=(90, 90, 70), inset=True),    # blank strip just east of Route 30
+    (24, 5):  MapBox("Elm's Lab",        offset=(144, 82), size=(8, 8),
+                      color=(110, 90, 120), inset=True),  # blank strip just north of New Bark Town
+    (3, 70):  MapBox("Dark Cave",        offset=(36, 40), size=(10, 10),
+                      color=(50, 50, 60), inset=True),    # blank strip south of Violet / west of Route 30
 }
 
 # Ordered corridor (for legends / progression labels), south-start to gym.
 CORRIDOR_ORDER = [(24, 5), (24, 4), (24, 3), (26, 3), (26, 1), (26, 2), (26, 11), (10, 5), (10, 7)]
 
-# Image pixel of global tile (0, 0). Provisional (0, 0) -- measured for real in Task 3 once the
-# corridor is calibrated against assets/maps/johto_full.png landmarks.
-ANCHOR_PX: tuple[int, int] = (0, 0)  # measured in Task 3
+# Image pixel of global tile (0, 0) -- i.e. Violet City's NW corner on assets/maps/johto_full.png.
+# Measured in Task 3 by an exhaustive per-tile anchor search (see derivation block above); confirmed
+# both structurally (perfect 1.0 non-white fraction on all 6 overworld boxes) and visually via
+# tests/verify_map_calibration.py landmark markers.
+ANCHOR_PX: tuple[int, int] = (3200, 2016)
 
 
 def to_image_px(bank: int, num: int, local_x: int, local_y: int) -> tuple[int, int] | None:
