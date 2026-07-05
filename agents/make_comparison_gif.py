@@ -56,8 +56,23 @@ def shorten_thought(text: str, max_len: int = 120) -> str:
     return cut + "…"
 
 
-def wrap_caption(text: str, width: int = 56, max_lines: int = 2) -> list:
-    return textwrap.wrap(text, width=width)[:max_lines]
+def wrap_caption(text: str, width: int = 34, max_lines: int = 2) -> list:
+    """Wrap text to fit the caption panel width, marking truncation honestly.
+
+    width=34 chars fits within the ~320 px right-panel margin at the 15-px
+    mono caption font. If textwrap drops lines beyond max_lines, the last
+    kept line gets a trailing "…" (trimmed to stay within width) so readers
+    know the caption was cut, instead of silently losing the ellipsis that
+    shorten_thought already appended.
+    """
+    all_lines = textwrap.wrap(text, width=width)
+    lines = all_lines[:max_lines]
+    if len(all_lines) > max_lines and lines and not lines[-1].endswith("…"):
+        last = lines[-1]
+        if len(last) >= width:
+            last = last[:width - 1]
+        lines[-1] = last + "…"
+    return lines
 
 
 def upscale2x(frame: np.ndarray) -> np.ndarray:

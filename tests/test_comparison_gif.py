@@ -25,6 +25,17 @@ def test_wrap_caption_max_two_lines():
     assert all(len(l) <= 20 for l in lines)
 
 
+def test_wrap_caption_marks_dropped_lines_with_ellipsis():
+    lines = wrap_caption("word " * 50, width=20, max_lines=2)
+    assert len(lines) == 2
+    assert lines[-1].endswith("…")
+
+
+def test_wrap_caption_no_ellipsis_when_nothing_dropped():
+    lines = wrap_caption("short caption", width=34, max_lines=2)
+    assert lines == ["short caption"]
+
+
 def test_upscale2x_doubles_dims():
     f = np.arange(144 * 160 * 3, dtype=np.uint8).reshape(144, 160, 3)
     up = upscale2x(f)
