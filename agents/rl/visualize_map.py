@@ -9,8 +9,9 @@ Two artifacts per run:
 
 It reuses the exact eval wrapper stack (agents/rl/evaluate_cnn.build_vec_env) and reads the agent's
 (map_bank, map_number, local_x, local_y) from RAM each step, mapping to global canvas pixels via
-agents/rl/map_layout. If assets/maps/johto_corridor.png exists it is used as the background; otherwise
-a labelled schematic canvas is generated (so the tool runs before the real map asset is added).
+agents/rl/map_layout. If assets/maps/johto_full.png exists it is used as the background (cropped to
+the corridor + capped to OUT_MAX_W px wide for output); otherwise a labelled schematic canvas is
+generated (so the tool runs before the real map asset is added).
 
 Usage:
   python -m agents.rl.visualize_map \
@@ -36,7 +37,8 @@ from stable_baselines3 import PPO
 from agents.rl.evaluate_cnn import build_vec_env
 from agents.rl import map_layout as ml
 
-ASSET_BG = os.path.join("assets", "maps", "johto_corridor.png")
+ASSET_BG = os.path.join("assets", "maps", "johto_full.png")
+OUT_MAX_W = 900  # never emit native (7520px-wide) frames — cap every PNG/GIF frame to this width
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,11 +63,32 @@ def rollout_positions(model, state_path, max_steps, deterministic):
 # ─────────────────────────────────────────────────────────────────────────────
 # Background: real stitched image if present, else a generated schematic.
 # ─────────────────────────────────────────────────────────────────────────────
+def _draw_inset_boxes(img: Image.Image) -> None:
+    """Draw each inset=True MapBox (name + rectangle) onto `img` in place, anchored via
+    ANCHOR_PX + offset*TILE_PX (i.e. to_image_px(bank, num, 0, 0) for the corner) so gym/lab
+    trajectories remain visible as labeled boxes on the real map — these interiors have no art of
+    their own on assets/maps/johto_full.png (see map_layout.py's inset derivation notes)."""
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+    for (bank, num), box in ml.MAP_INFO.items():
+        if not box.inset:
+            continue
+        x0, y0 = ml.to_image_px(bank, num, 0, 0)
+        x1, y1 = ml.to_image_px(bank, num, box.size[0], box.size[1])
+        draw.rectangle([x0, y0, x1, y1], fill=box.color, outline=(140, 150, 170))
+        draw.text((x0 + 3, y0 + 2), box.name, fill=(230, 235, 245), font=font)
+
+
 def load_background() -> Image.Image:
-    w, h = ml.canvas_size()
     if os.path.exists(ASSET_BG):
-        return Image.open(ASSET_BG).convert("RGB").resize((w, h))
+        img = Image.open(ASSET_BG).convert("RGB")
+        _draw_inset_boxes(img)
+        return img
     # Schematic: dark canvas with one labelled rectangle per corridor map.
+    w, h = ml.canvas_size()
     img = Image.new("RGB", (w, h), (24, 26, 32))
     draw = ImageDraw.Draw(img)
     try:
@@ -131,8 +154,19 @@ def draw_trajectory(base: Image.Image, points_px, width=2) -> Image.Image:
 
 
 def positions_to_px(positions):
-    """Map raw RAM positions to canvas px, keeping None for maps outside the corridor layout."""
-    return [ml.to_global_px(*p) for p in positions]
+    """Map raw RAM positions to canvas px, keeping None for maps outside the corridor layout.
+    Goes through ram_to_image_px, which un-swaps env/ram_reader.py's local_x/local_y (see
+    map_layout.ram_to_image_px docstring)."""
+    return [ml.ram_to_image_px(*p) for p in positions]
+
+
+def finalize_frame(img: Image.Image) -> Image.Image:
+    """Crop to the corridor and cap the output width (never emit native 7520-px frames)."""
+    x0, y0, x1, y1 = ml.corridor_bbox_px(pad_tiles=8)
+    img = img.crop((x0, y0, x1, y1))
+    if img.width > OUT_MAX_W:
+        img = img.resize((OUT_MAX_W, int(img.height * OUT_MAX_W / img.width)))
+    return img
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -145,18 +179,19 @@ def render(positions, out_prefix, gif_stride=20, gif_fps=20, title=None):
     px = positions_to_px(positions)
     known = [p for p in px if p is not None]
 
-    # Static overlay = heatmap + full trajectory
+    # Static overlay = heatmap + full trajectory, composed at native scale then cropped/capped.
     composed = Image.alpha_composite(bg.convert("RGBA"), heatmap_overlay(known, size))
     composed = draw_trajectory(composed, px)
+    composed = finalize_frame(composed)
     if title:
-        ImageDraw.Draw(composed).text((6, size[1] - 14), title, fill=(255, 255, 255))
+        ImageDraw.Draw(composed).text((6, composed.height - 14), title, fill=(255, 255, 255))
     png_path = f"{out_prefix}.png"
     composed.convert("RGB").save(png_path)
 
-    # Animated reveal
+    # Animated reveal — built from the cropped+scaled frame, never the native-resolution one.
     frames = []
     for k in range(gif_stride, len(px) + gif_stride, gif_stride):
-        frame = draw_trajectory(bg.convert("RGBA"), px[:k]).convert("RGB")
+        frame = finalize_frame(draw_trajectory(bg.convert("RGBA"), px[:k])).convert("RGB")
         frames.append(np.asarray(frame))
     gif_path = f"{out_prefix}.gif"
     if frames:

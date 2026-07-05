@@ -51,3 +51,7 @@ def test_corridor_bbox_contains_all_overworld_maps():
         by0 = ml.ANCHOR_PX[1] + box.offset[1] * ml.TILE_PX
         assert x0 <= bx0 and y0 <= by0
         assert x1 >= bx0 + box.size[0] * ml.TILE_PX and y1 >= by0 + box.size[1] * ml.TILE_PX
+
+
+def test_ram_to_image_px_unswaps_coordinates():
+    assert ml.ram_to_image_px(24, 4, 3, 10) == ml.to_image_px(24, 4, 10, 3)

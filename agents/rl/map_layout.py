@@ -212,3 +212,10 @@ def corridor_bbox_px(pad_tiles: int = 4) -> tuple[int, int, int, int]:
 def canvas_size() -> tuple[int, int]:
     """(width, height) in pixels of the real stitched Johto image (assets/maps/johto_full.png)."""
     return 7520, 4320
+
+
+def ram_to_image_px(bank: int, num: int, ram_local_x: int, ram_local_y: int):
+    """env/ram_reader.py reads wYCoord into local_x and wXCoord into local_y (WRAM order is
+    wYCoord, wXCoord). Frozen there because trained checkpoints consume those semantics; every
+    geometry consumer must project through this helper, which un-swaps."""
+    return to_image_px(bank, num, ram_local_y, ram_local_x)
