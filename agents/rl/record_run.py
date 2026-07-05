@@ -28,6 +28,34 @@ def record(model_path, state_path, out_dir, max_steps, deterministic):
     vec, env = build_vec_env(state_path, gif_dir=None, watch=False)
     model = PPO.load(model_path, device=device)
 
+    # DummyVecEnv auto-resets the underlying env INSIDE step_wait() the moment
+    # terminated/truncated is True, before control returns to this loop. That means
+    # by the time vec.step() returns with dones[0]==True, env.pyboy already reflects
+    # the NEXT episode's reset state (full HP, badge_count back to 0, spawn position) —
+    # querying RAM/screen after the fact silently records reset artifacts instead of the
+    # actual badge-won / death frame. Monkeypatch env.step to snapshot the screen + RAM
+    # at the true terminal instant, while it's still live, before the wrapper's reset.
+    terminal_capture = {}
+    orig_step = env.step
+
+    def _step_and_capture(action):
+        result = orig_step(action)
+        _, _, terminated, truncated, _ = result
+        if terminated or truncated:
+            terminal_capture["screen"] = env.pyboy.pyboy.screen.ndarray[:, :, :3].copy()
+            terminal_capture["ram"] = env.ram_reader.read_all()
+        return result
+
+    env.step = _step_and_capture
+
+    def _row(step, s):
+        return {
+            "step": step, "map": [s["map_bank"], s["map_number"]],
+            "pos": [s["local_x"], s["local_y"]], "battle": s["battle_type"],
+            "zephyr": s["zephyr"], "hp_ratio": s["hp_ratio"],
+            "badge_count": s["badge_count"],
+        }
+
     obs = vec.reset()
     steps = 0
     with open(os.path.join(out_dir, "meta.jsonl"), "w", buffering=1) as f:
@@ -35,15 +63,19 @@ def record(model_path, state_path, out_dir, max_steps, deterministic):
             iio.imwrite(os.path.join(out_dir, f"frame_{step:05d}.png"),
                         env.pyboy.pyboy.screen.ndarray[:, :, :3].copy())
             s = env.ram_reader.read_all()
-            f.write(json.dumps({
-                "step": step, "map": [s["map_bank"], s["map_number"]],
-                "pos": [s["local_x"], s["local_y"]], "battle": s["battle_type"],
-                "zephyr": s["zephyr"],
-            }) + "\n")
+            f.write(json.dumps(_row(step, s)) + "\n")
             steps = step + 1
             action, _ = model.predict(obs, deterministic=deterministic)
+            terminal_capture.clear()
             obs, _, dones, _ = vec.step(action)
             if dones[0]:
+                # Use the pre-reset snapshot captured inside _step_and_capture, NOT a
+                # fresh read here (the env has already been reset by this point).
+                if terminal_capture:
+                    iio.imwrite(os.path.join(out_dir, f"frame_{steps:05d}.png"),
+                                terminal_capture["screen"])
+                    f.write(json.dumps(_row(steps, terminal_capture["ram"])) + "\n")
+                    steps += 1
                 break
     vec.close()
     print(f"[record] wrote {steps} frames + meta.jsonl to {out_dir}")
