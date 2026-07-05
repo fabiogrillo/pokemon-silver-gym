@@ -51,10 +51,17 @@ class OllamaClient:
         msg = resp.choices[0].message
         tokens = getattr(resp, "usage", None)
         tokens = tokens.total_tokens if tokens else 0
-        thought = (msg.content or "").strip()
+        # Thinking models (qwen3-vl) put their reasoning in a separate `reasoning` field
+        # (Ollama's OpenAI-compat extension) and often leave `content` empty when they emit
+        # a structured tool call. Fall back to it so the trace keeps the model's real
+        # thoughts — the montage captions are verbatim extracts of this field.
+        reasoning = (getattr(msg, "reasoning", None) or "").strip()
+        content = (msg.content or "").strip()
+        thought = content or reasoning
         if not msg.tool_calls:
-            # Fallback: the model may have emitted the tool call as text in `content`.
-            name, args = parse_tool_call_from_content(thought)
+            # Fallback: the model may have emitted the tool call as text in `content`
+            # (never in `reasoning` — don't mine that channel for spurious JSON spans).
+            name, args = parse_tool_call_from_content(content)
             return {"thought": thought, "tool_name": name, "args": args, "tokens": tokens}
         call = msg.tool_calls[0].function
         try:
