@@ -122,7 +122,7 @@ def export(frames: list, out_base: str, fps: int) -> None:
                 duration=int(round(1000 / fps)))
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", gif_path,
-         "-movflags", "+faststart", "-pix_fmt", "yuv420p", mp4_path],
+         "-c:v", "libopenh264", "-movflags", "+faststart", "-pix_fmt", "yuv420p", mp4_path],
         check=True,
     )
     for p in (gif_path, mp4_path):
