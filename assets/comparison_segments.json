@@ -1,0 +1,17 @@
+{
+  "fps": 10,
+  "segments": [
+    {
+      "seconds": 7,
+      "rl": [0, 31],
+      "llm": [12, 72],
+      "caption": "Okay, let's see. The user is currently in a battle with Bird Keeper Abe, and the message says he was defeated. So the battle just ended. According to the instructions, after defeating a trainer, I need to go back to navigating toward Falkner."
+    },
+    {
+      "seconds": 7,
+      "rl": [513, 842],
+      "llm": [110, 260],
+      "caption": "Okay, let's see. The user is in the Violet City Gym, trying to get to Falkner at the top. They've been stuck because they tried moving left but it's blocked. The walkable directions now show only left, but that didn't work. Wait, maybe I need to check the current state again."
+    }
+  ]
+}
