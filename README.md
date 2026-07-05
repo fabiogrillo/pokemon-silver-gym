@@ -9,6 +9,8 @@ The focused milestone is the **gym vertical slice**: start inside the Violet Cit
 Falkner, win the badge. The full New Bark → Violet *corridor* is kept as a stretch goal.
 Everything is written by hand (Copilot for autocomplete only) to maximize learning.
 
+![RL vs LLM — same gym, same goal](assets/comparison.gif)
+
 > **Status**: ✅ **RL agent solved the gym slice — 100% badge rate** (`agent_087`, ~840 steps/episode,
 > from `saves/violet_city_gym.state`). 🔬 The **LLM agent** (vision + ReAct + tool-calling) is built and
 > tested; its finding is the crux of the comparison — **it wins battles but cannot navigate the gym to
