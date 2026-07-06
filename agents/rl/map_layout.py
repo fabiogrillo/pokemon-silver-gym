@@ -157,8 +157,14 @@ MAP_INFO: dict[tuple[int, int], MapBox] = {
     (24, 4):  MapBox("New Bark Town",    offset=(150, 90), size=(20, 18), color=(70, 100, 80)),
 
     # ---- interiors (hand-placed insets; positions final as of Task 3, see derivation block above) ----
-    (10, 7):  MapBox("Falkner's Gym",    offset=(20, 36), size=(8, 8),
-                      color=(120, 80, 70), inset=True),   # blank strip just south of Violet City
+    (10, 7):  MapBox("Falkner's Gym",    offset=(20, 36), size=(10, 16),
+                      color=(120, 80, 70), inset=True),   # blank strip just south of Violet City;
+                      # size corrected in Task 3 to the true VIOLET_GYM dimensions (5x8 blocks ->
+                      # 10x16 tiles, constants/map_constants.asm) so agents/llm/extract_collision.py's
+                      # gym grid matches this box exactly (was an 8x8 placeholder guess before L1a
+                      # needed the real size); offset is still a hand-placed visual inset, unverified
+                      # against blank canvas at the new size (cosmetic only, out of this task's scope
+                      # -- see the map-viz calibration deferral note).
     (26, 11): MapBox("Violet Gatehouse", offset=(40, 6), size=(6, 6),
                       color=(90, 90, 70), inset=True),    # blank strip north of Route 31/Violet border
     (26, 10): MapBox("Mr. Pokemon's",    offset=(82, 60), size=(8, 8),
