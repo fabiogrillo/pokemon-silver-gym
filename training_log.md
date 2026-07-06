@@ -2402,3 +2402,14 @@ at the corridor state (the gym slice used `saves/violet_city_gym.state`).
   the corridor before LLM-2, or `max_waypoint` can never exceed 0.
 - **Verdict:** navigation fails exactly as the findings doc predicts — this is the calibration
   baseline for L1 (`navigate_to` A* tool).
+
+### Agent 088 — RL-1 verdict (2026-07-06, stopped at 41.3M/60M per kill criterion)
+
+Kill criterion fired: `nav/reach_route31 = 0.0` at 40M with `nav/ep_max_waypoint` FLAT at 2 from
+37M→41M (the rising-signal extension condition was not met). What R1+R4 DID buy vs agent_079's
+plateau: the start policy consolidated Cherrygrove AND the Route-30 gate (wp 0→2 between 30-37M,
+`reach_cherrygrove 1.0`, `reach_route30_gate 1.0`) with corridor confinement active and no off-path
+stall — the 079 failure mode (Dark Cave farming) is GONE, confirming the structural hypothesis. The
+frontier side reached the gym (`front/ep_max_waypoint 5.0`), so the archive spans the corridor
+end-to-end; what's missing is start-policy consolidation past wp 2 — exactly what RL-2's staged
+resets + event-scaled episode budget (R2) target. RL-2 will warm from `agent_088_39999936_steps.zip`.
