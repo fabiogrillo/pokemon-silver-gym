@@ -63,8 +63,14 @@ def test_frontier_score_flat_tiers_no_depth_bias():
     delivered = frontier_score(egg_received=True, egg_delivered=True, return_progress=5, max_waypoint=2, gym=0)
     delivered_gym = frontier_score(egg_received=True, egg_delivered=True, return_progress=5, max_waypoint=5, gym=1)
     assert carry_shallow == carry_deep, f"carry score must NOT depend on depth: {carry_shallow} vs {carry_deep}"
-    assert delivered == delivered_gym, "delivered cells are flat too (Phase-2 deprioritized uniformly)"
-    assert pre_egg < delivered < carry_shallow, f"bad tiers: pre={pre_egg} deliv={delivered} carry={carry_shallow}"
+    # R4 (final-attempt findings §2): delivered cells are no longer flat — they rank by the CELL's
+    # own waypoint ordinal so ε-greedy resets concentrate at the corridor's leading edge. Flatness
+    # is preserved one level down: two delivered cells at the SAME waypoint are still equal.
+    assert delivered < delivered_gym, "delivered cells rank by waypoint ordinal (R4 leading-edge sampling)"
+    same_wp = frontier_score(egg_received=True, egg_delivered=True, return_progress=9, max_waypoint=2, gym=0)
+    assert delivered == same_wp, "delivered cells at the SAME waypoint stay flat (no depth bias within a tier)"
+    assert pre_egg < carry_shallow, f"bad tiers: pre={pre_egg} carry={carry_shallow}"
+    assert pre_egg < delivered, "delivered always outranks pre-egg"
 
 
 def test_add_and_sample_roundtrip():
