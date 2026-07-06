@@ -22,7 +22,10 @@ SYSTEM_PROMPT = (
     "blocking your path and is about to battle you — press 'a' REPEATEDLY (it can take ~10 presses) "
     "to advance the dialogue until the battle starts. Once a battle ENDS, go back to navigating: "
     "MOVE toward Falkner — do not keep pressing 'a'. "
-    "Coordinates: x grows EAST, y grows SOUTH; moving up decreases y.\n\n"
+    "Coordinates: x grows EAST, y grows SOUTH; moving up decreases y.\n\n" +
+    "PATHFINDING: prefer `navigate_to(x, y)` when you know the (x, y) tile you want to reach — it "
+    "walks there automatically, routing around walls on the current map. Use `move`/`press` for "
+    "single steps or when you only know a direction, not a destination tile.\n\n"
     + GOAL
 )
 

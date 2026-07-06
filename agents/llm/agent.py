@@ -123,7 +123,7 @@ class ReActAgent:
                 obs = {"ok": False, "note": "no tool call → fallback press a", "stopped_early": False}
             else:
                 try:
-                    name, args = validate_tool_call(name, args, cfg)
+                    name, args = validate_tool_call(name, args, cfg, state)
                     obs = execute_tool(name, args, wrapper, reader, cfg)
                 except ToolValidationError as e:
                     obs = {"ok": False, "note": f"invalid tool: {e}", "stopped_early": False}

@@ -26,3 +26,25 @@ def test_press_runs(emulator):
     wrapper, reader = emulator
     obs = execute_tool("press", {"button": "a"}, wrapper, reader, CFG)
     assert obs["ok"] is True
+
+
+def test_navigate_to_walks_north_in_gym(gym_emulator):
+    # saves/violet_city_gym.state starts inside the gym map (bank 10, num 7), true (x, y) = (5, 12).
+    # Straight north (same x) is open for 2 tiles (assets/collision/gym.json row 9 col 5 is a wall,
+    # confirmed against the live emulator: pressing "up" repeatedly from this exact save moves
+    # local_x 12 -> 11 -> 10 and then stops) -- so the goal here is 2 tiles north, a target that is
+    # both grid- and emulator-verified walkable and reachable in a straight line.
+    wrapper, reader = gym_emulator
+    before = reader.read_all()
+    # RAM local_x/local_y are swapped relative to their names (agents/rl/map_layout.ram_to_image_px);
+    # TRUE (x, y) is (local_y, local_x).
+    true_x, true_y = before["local_y"], before["local_x"]
+    goal = (true_x, true_y - 2)
+
+    obs = execute_tool("navigate_to", {"x": goal[0], "y": goal[1]}, wrapper, reader, CFG)
+
+    after = reader.read_all()
+    after_true = (after["local_y"], after["local_x"])
+    assert obs["ok"] is True
+    assert after_true[1] < true_y  # moved toward the target (north = smaller true y)
+    assert after_true == goal
