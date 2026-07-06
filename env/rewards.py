@@ -79,6 +79,15 @@ GYM_MAP          = (10, 7)   # Violet City Gym (Falkner)
 CORRIDOR_WHITELIST = {NEW_BARK, ROUTE_29, CHERRYGROVE, ROUTE_30_GATE, ROUTE_31,
                       VIOLET_GATEHOUSE, VIOLET_CITY, GYM_MAP}
 
+# R1 (final-attempt findings §2): agent_079's off-path lure showed that Dark Cave / Sprout Tower
+# side-trips die earning nothing — the exploration-reward gating above (CORRIDOR_WHITELIST) removes
+# the INCOME from wandering off-path, but doesn't remove the OPTION. CORRIDOR_LEGAL is the superset
+# used by the (gated, default-off) CONFINE_TO_CORRIDOR termination in pokemon_env_cnn.py: it adds the
+# legal INTERIOR maps (Elm's lab, the Route31<->Violet gatehouse building, the gym) that the corridor
+# whitelist doesn't need to reward but that the confinement check must not treat as "off corridor"
+# (the agent must be able to walk INTO them without the episode dying).
+CORRIDOR_LEGAL = CORRIDOR_WHITELIST | {ELM_LAB, VIOLET_GATEHOUSE, GYM_MAP}
+
 # agent_065: the SOUTHERN DELIVERY CORRIDOR (Cherrygrove → Route29 → NewBark → Elm). Used for the dense
 # per-tile southward-carry pull (see compute_reward) — the fix for the carry-NAVIGATION wall (ESCALATION #3).
 SOUTH_CORRIDOR = {CHERRYGROVE, ROUTE_29, NEW_BARK, ELM_LAB}

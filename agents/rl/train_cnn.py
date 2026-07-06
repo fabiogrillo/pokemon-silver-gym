@@ -153,6 +153,7 @@ def make_env(rank, state_path, frontier_root=None, p_frontier=0.0):
             egg_marker=getattr(config, "EGG_MARKER", False),  # agent_066: egg-state visual marker
             exploration_scale=getattr(config, "EXPLORATION_SCALE", 1.0),  # agent_071: 0 in Phase-2 gym runs
             confine_to_gym=getattr(config, "CONFINE_TO_GYM", False),  # agent_087: end episode on leaving GYM_MAP
+            confine_to_corridor=getattr(config, "CONFINE_TO_CORRIDOR", False),  # R1: end episode off-corridor
         )
         env.reset(seed=rank)
         return env

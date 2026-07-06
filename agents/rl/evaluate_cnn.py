@@ -42,6 +42,9 @@ def build_vec_env(state_path: str, gif_dir: str | None, watch: bool, speed: int 
             gif_dir=gif_dir,
             gif_every_n_episodes=1 if gif_dir else 10**9,
             gif_prefix="eval",
+            # confine_to_gym / confine_to_corridor are intentionally NOT passed here (both default
+            # False in PokemonEnvCNN): eval must never confine the agent — we need the true,
+            # un-clipped success/behavior signal, same as today's confine_to_gym handling.
         )
         # Throttle the emulator so a watched run is viewable (0 = unbounded, 1 = realtime, 2 = 2×).
         if watch and speed > 0:

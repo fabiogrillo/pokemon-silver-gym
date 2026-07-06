@@ -223,6 +223,11 @@ EXPLORATION_SCALE  = 0.0         # agent_083: OFF — anti-wander for the gym ta
 CONFINE_TO_GYM     = True        # agent_087: end the episode if the agent leaves GYM_MAP (10,7). Reward tweaks
                                  # couldn't beat the wander-grind basin (083-086 ≤40%); removing the wander
                                  # OPTION is the structural fix. Off for the corridor task (set False).
+CONFINE_TO_CORRIDOR = False      # R1 (final-attempt findings §2, technique R1): end the episode if the agent
+                                 # leaves CORRIDOR_LEGAL (env/rewards.py). Structural fix for agent_079's
+                                 # off-path lure (Dark Cave / Sprout Tower episodes died earning nothing) —
+                                 # removes the OPTION instead of relying on reward tweaks. Default False here;
+                                 # turned on for the corridor-task run (Task 3).
 # (prior) agent_079: BOOSTED 1.0→4.0 — at 1.0 the policy grinds Route 29 and never
                                  # explores west (078 stalled). At 4.0 a new-MAP crossing pays +0.4 post (> a
                                  # capped battle win), so progressing across the Route-29→Cherrygrove boundary

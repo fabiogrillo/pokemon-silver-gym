@@ -8,7 +8,7 @@ from .rewards import (
     compute_reward, make_prev_state, make_reward_maxes,
     CHERRYGROVE, ROUTE_30_GATE, ROUTE_31, VIOLET_CITY, GYM_MAP,
     ROUTE_29, NEW_BARK, ELM_LAB,
-    MR_POKEMON_BIT, ELM_BIT,
+    MR_POKEMON_BIT, ELM_BIT, CORRIDOR_LEGAL,
 )
 from .frontier_archive import FrontierArchive, cell_key, frontier_score
 
@@ -30,7 +30,8 @@ class PokemonEnvCNN(gym.Env):
                  gif_every_n_episodes=100, gif_prefix="episode",
                  frontier_root=None, p_frontier=0.0, frontier_max_cells=4000,
                  frontier_cell_k=4, frontier_epsilon=0.1, frontier_max_steps=MAX_STEPS,
-                 egg_marker=False, exploration_scale=1.0, confine_to_gym=False):
+                 egg_marker=False, exploration_scale=1.0, confine_to_gym=False,
+                 confine_to_corridor=False):
         """PyBoy-backed Gymnasium env with Dict obs (RGB image + state vector) for CnnPolicy.
 
         Go-Explore frontier reset (agent_059): if `frontier_root` is set, a fraction `p_frontier` of
@@ -106,6 +107,11 @@ class PokemonEnvCNN(gym.Env):
         self.exploration_scale = exploration_scale  # agent_071: 0 in Phase-2 gym runs (no wander-out pull)
         self.confine_to_gym = confine_to_gym  # agent_087: end the episode if the agent leaves GYM_MAP
                                               # (kills the wander-grind basin that capped 083-086 at ~40%)
+        self.confine_to_corridor = confine_to_corridor  # R1 (final-attempt findings §2): end the episode
+                                              # if the agent leaves CORRIDOR_LEGAL — the structural fix for
+                                              # agent_079's off-path lure (Dark Cave / Sprout Tower episodes
+                                              # died earning nothing; this removes the OPTION instead of
+                                              # relying on reward tweaks). Off by default.
 
     def _state_vector(self, ram):
         """RAM-derived self-state vector, all in [0,1]. Enemy fields are zeroed OUTSIDE battle because
@@ -238,6 +244,13 @@ class PokemonEnvCNN(gym.Env):
         # to wild-grind (the stable basin that capped 083-086 at ~40% badge). Forces it to solve the gym.
         # Off by default (corridor task); enabled via config.CONFINE_TO_GYM for the gym slice.
         if self.confine_to_gym and current_map != GYM_MAP:
+            terminated = True
+
+        # R1 (final-attempt findings §2): confine-to-corridor — leaving CORRIDOR_LEGAL ends the episode
+        # so the agent CANNOT wander into Dark Cave / Sprout Tower / other off-path maps (agent_079's
+        # off-path lure: those episodes died earning nothing). Off by default; both flags are
+        # independently usable (mirrors confine_to_gym's placement exactly).
+        if self.confine_to_corridor and current_map not in CORRIDOR_LEGAL:
             terminated = True
 
         info = {
