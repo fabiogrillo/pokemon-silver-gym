@@ -124,12 +124,20 @@ class ReActAgent:
             name, args = out["tool_name"], out["args"]
 
             if name is None:
-                # qwen3-vl sometimes returns an empty response (no content, no tool_calls).
-                # Don't waste the turn: press 'a' — it advances battles/dialogue (where empty
-                # responses cluster) and is harmless in the overworld. `out["tool_name"]` stays
-                # None so callers can still measure the empty-response rate.
-                execute_tool("press", {"button": "a"}, wrapper, reader, cfg)
-                obs = {"ok": False, "note": "no tool call → fallback press a", "stopped_early": False}
+                # qwen3-vl sometimes returns an empty response (no content, no tool_calls) even
+                # after llm_client's retry. In battle, pressing 'a' is still correct (advances
+                # dialogue/attack menus). In the overworld it is NOT safe: facing an NPC, 'a'
+                # self-feeds their textbox (open/close) forever with no way out. Use a harmless
+                # no-op wait there instead. `out["tool_name"]` stays None so callers can still
+                # measure the empty-response rate.
+                if state["battle_type"] == 0:
+                    execute_tool("wait_frames", {"n": 24}, wrapper, reader, cfg)
+                    obs = {"ok": False, "note": "no tool call → fallback wait_frames",
+                           "stopped_early": False}
+                else:
+                    execute_tool("press", {"button": "a"}, wrapper, reader, cfg)
+                    obs = {"ok": False, "note": "no tool call → fallback press a",
+                           "stopped_early": False}
             else:
                 try:
                     name, args = validate_tool_call(name, args, cfg, state)
