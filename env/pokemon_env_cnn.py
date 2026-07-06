@@ -217,8 +217,17 @@ class PokemonEnvCNN(gym.Env):
         if self.frontier is not None:
             egg_delivered = bool(ram_state["flag_elm_mr_pokemon"] & ELM_BIT)
             if egg_now or current_map == GYM_MAP:
+                # R4 audit: frontier_score's max_waypoint must be THIS CELL's own waypoint ordinal at
+                # capture time, NOT self.max_waypoint (the running EPISODE max — agent_061's exact
+                # depth-leak bug, replayed for waypoints instead of return_progress: an episode that
+                # earlier reached Violet City would stamp that ordinal onto a LATER, shallower
+                # New Bark cell, letting add()'s "higher score replaces" overwrite it and destroy the
+                # shallow cell the corridor still needs practiced). Compute the cell's own ordinal
+                # from current_map directly, mirroring the self.max_waypoint update above but WITHOUT
+                # the running max().
+                cell_waypoint = WAYPOINT_ORDER.index(current_map) + 1 if current_map in WAYPOINT_ORDER else 0
                 score = frontier_score(egg_now, egg_delivered, self.return_progress,
-                                       self.max_waypoint, ram_state["gym_trainers_beaten"])
+                                       cell_waypoint, ram_state["gym_trainers_beaten"])
                 key = cell_key(ram_state, k=self.frontier_cell_k)
                 self.frontier.add(key, score, self.pyboy.save_state_bytes)
 

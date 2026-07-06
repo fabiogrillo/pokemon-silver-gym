@@ -40,7 +40,9 @@ def cell_key(ram_state, k=4):
 
 
 def frontier_score(egg_received, egg_delivered, return_progress, max_waypoint, gym):
-    """FLAT priority TIER from the cell's OWN story flags — NOT its depth (agent_061 fix).
+    """Priority TIER from the cell's OWN story flags — NOT episode depth (agent_061 fix), PLUS
+    (R4, docs/superpowers/specs/2026-07-06-final-attempt-findings.md §2) per-waypoint ranking
+    WITHIN the delivered tier for the corridor task.
 
     agent_060 used depth-scoring (100 + return_progress), where return_progress is the EPISODE max.
     When a deep episode passed through a physically-shallow carry cell, add()'s "higher score
@@ -49,13 +51,33 @@ def frontier_score(egg_received, egg_delivered, return_progress, max_waypoint, g
     reset at the shallow carry states where the START episodes actually are, so the "push south from
     Cherrygrove" segment was never practiced and delivery never transferred (nav/egg_delivered flat 0).
 
-    Flat tiers fix both failure modes: (1) a cell's score never changes, so add() keeps the FIRST
-    captured (shallow-included) state per cell — shallow carry cells persist; (2) all carry cells are
-    EQUAL, so ε-greedy samples uniformly across depths → shallow AND deep carry states get practiced.
-    carry (2) > delivered (1) > pre-egg (0) keeps Phase-1 transfer from being starved by Phase-2 cells.
-    (return_progress/max_waypoint/gym kept in the signature for telemetry/future Phase-2 reprioritizing.)"""
+    agent_061's flat tiers fixed both failure modes: (1) a cell's score never changes, so add()
+    keeps the FIRST captured (shallow-included) state per cell — shallow carry cells persist;
+    (2) all carry cells are EQUAL, so ε-greedy samples uniformly across depths — shallow AND deep
+    carry states get practiced. carry (2) > delivered (1) > pre-egg (0) kept Phase-1 transfer from
+    being starved by Phase-2 cells. BOTH FIXES ARE STILL LOAD-BEARING and remain untouched here:
+    carry stays flat 2.0, pre-egg stays flat 0.0, and a cell's score still never changes after
+    capture (add() only ever raises a cell's own stored score, it never revisits it with a
+    different depth's value — see the R4 call-site audit note below).
+
+    R4 re-scores ONLY the delivered tier, because for the corridor task (final-attempt run) every
+    frontier-relevant state IS already egg-delivered — the carry/delivered split from the egg quest
+    is now largely vestigial, and "delivered" was a flat 1.0 for every cell from New Bark all the way
+    to the gym. That flat-across-depth behavior, which was exactly right for carry cells (uniform
+    practice across the Cherrygrove backtrack), was wrong for the corridor: it gave the leading edge
+    (Route 31 / gatehouse / Violet / gym) the SAME ε-greedy sampling weight as the already-consolidated
+    New Bark segment, so resets were spread thin instead of concentrated where the start policy is
+    still lagging. Delivered cells are now scored `1.0 + max_waypoint` (max_waypoint is the CELL's
+    own waypoint ordinal at capture time — 0..5 per WAYPOINT_ORDER in pokemon_env_cnn.py — not the
+    running episode max; see the call-site audit note), so gym-adjacent cells outrank New Bark cells
+    and ε-greedy exploitation concentrates at the leading edge. The tier stays flat WITHIN a single
+    waypoint level (agent_061's "no depth bias" fix is preserved one level down: two delivered cells
+    at the same waypoint are still equal, only the waypoint level itself now differentiates them).
+    Note this means a delivered cell deep in the corridor (max_waypoint >= 2) can now score ABOVE the
+    flat carry tier (2.0) — acceptable because carry cells barely occur once the corridor task is past
+    the egg quest; if Phase-1 (egg backtrack) practice is reintroduced, this tradeoff should be revisited."""
     if egg_delivered:
-        return 1.0   # Phase-2 (post-delivery) — kept, but deprioritized vs the Phase-1 backtrack
+        return 1.0 + max_waypoint   # Phase-2: rank by the CELL's own waypoint ordinal (leading-edge sampling)
     if egg_received:
         return 2.0   # carry (egg in hand, undelivered) — the Phase-1 practice we want, FLAT across depth
     return 0.0       # pre-egg (start policy already does this)
