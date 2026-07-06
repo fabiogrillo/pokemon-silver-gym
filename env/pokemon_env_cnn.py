@@ -12,11 +12,14 @@ from .rewards import (
 )
 from .frontier_archive import FrontierArchive, cell_key, frontier_score
 
-MAX_STEPS = 2**17  # 131072 — agent_082: 2× longer episodes (PWhiddy used ~163k for the analogous long task)
-                   # to test if the Route-30-capable policy reaches Route 31 with more steps/episode. (prev 65536.) The "65k hurts" diagnosis (10c-10d) was confounded by the visited-mask
-                   # (the real culprit, per the 10e ablation). The egg delivery — never experienced
-                   # in any run — needs post-pickup wandering time (PWhiddy solved the analogous
-                   # Oak's-Parcel backtrack with 163k-step episodes).
+MAX_STEPS = 2**16  # 65536 — agent_088: REVERTED to agent_079's episode length. agent_082 bumped this to
+                   # 2**17 (131072) as an isolated warm-start test (does the Route-30-capable policy reach
+                   # Route 31 with more steps/episode?), but that run was never resolved — the project
+                   # pivoted to the gym slice (083) before a result was logged in training_log.md. RL-1 is
+                   # a faithful revert to the 079 recipe (+ CONFINE_TO_CORRIDOR), so this untested variable
+                   # is reverted too rather than silently carried forward. (prior 131072, agent_082, abandoned.)
+                   # The "65k hurts" diagnosis (10c-10d) was confounded by the visited-mask (the real
+                   # culprit, per the 10e ablation) — not by MAX_STEPS itself.
 
 # Ordered route waypoints (ordinal = index + 1) — drives per-episode navigation progress logging
 # to TensorBoard, independent of reward. 0 = start/New Bark … 5 = Violet Gym.

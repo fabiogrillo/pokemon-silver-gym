@@ -2312,3 +2312,62 @@ Debug arc (systematic-debugging; each bug masked the next):
 enough for the LLM — it lacks a spatial compass to the goal. RL internalizes goal geometry via
 trial-and-error; the local vision LLM reasons in text but can't convert that into sustained navigation.
 This IS the headline RL-vs-LLM result. Full arc: `docs/superpowers/plans/2026-06-29-llm-agent.md`.
+
+---
+
+## Agent 088 — CORRIDOR FINAL ATTEMPT RL-1 (R1+R4) (2026-07-06, LAUNCHED)
+
+**Hypothesis (findings §2/§4, RL-1 row):** agent_079's recipe (bidirectional Go-Explore frontier +
+Violet curriculum anchors + `EXPLORATION_SCALE=4.0`) already connects the corridor archive end-to-end
+and pushes the START policy past the Phase-1 wall segment-by-segment (`reach_cherrygrove` 1.0 @28M,
+`reach_route30_gate` 1.0 @37M, accelerating) — but then plateaus at Route 30 (`nav/reach_route31` = 0.0
+for ~83M, 44M→127M) because `EXPLORATION_SCALE=4.0` also lures the policy into dead-end maps (Dark
+Cave/Sprout Tower — 235 cave cells harvested). **R1** generalizes the agent_087 lesson (structural fix
+beats reward tweaks: `CONFINE_TO_GYM` took the gym slice 40%→100% by removing the wander-grind OPTION,
+not by reward engineering) to the corridor: the new gated `CONFINE_TO_CORRIDOR` flag (env + config,
+default off, wired in `train_cnn`/`evaluate_cnn` — commit 6a7fb64) ends the episode the instant the
+agent leaves `CORRIDOR_LEGAL`, so entering a cave/tower now costs the *rest of the episode* instead of
+paying `+0.4` for nothing. **R4** (frontier archive re-scored by `max_waypoint` ordinal instead of the
+egg-quest-era tiers — already landed, commits 25188af + c0dbebb) concentrates ε-greedy frontier resets
+at the leading edge of the corridor instead of uniformly across it.
+
+**Config recovery.** `agents/rl/config.py` was in agent_087's gym-slice state (`CONFINE_TO_GYM=True`,
+`EXPLORATION_SCALE=0.0`, `FRONTIER_ENABLED=False`, pure 12×`violet_city_gym` curriculum, lr 5e-5, flat
+ent_coef 0.005, `TOTAL_TIMESTEPS_CNN=5M`, `CHECKPOINT_FREQ_CNN=1M`, warm from `agent_085@5M`). Config.py's
+own git history has no literal `RUN_NAME="agent_079"` commit (the file is edited in place between runs,
+rarely committed per-run), so the 079 recipe was reconstructed from this file's inline historical
+comments (each field documents its full agent-by-agent chain) cross-checked against training_log's
+agent_078/079/083 entries. **Every delta applied, reverting 087's gym state back to the 079 corridor
+recipe:**
+
+| Field | 087 (gym, before) | 088 (corridor, after) | Source |
+|---|---|---|---|
+| `CURRICULUM_STATES_CNN` | 12×`violet_city_gym` | 3×`violet_city` + 2×`violet_city_gym` + 7×`egg_delivered_clean` (4 frontier) | 078 entry (bidirectional curriculum, unchanged into 079) |
+| `EXPLORATION_SCALE` | 0.0 | **4.0** | 079 entry ("BOOSTED 1.0→4.0") |
+| `CONFINE_TO_GYM` | True | **False** | corridor task must not confine to the gym |
+| `CONFINE_TO_CORRIDOR` | False (default) | **True** | R1, the new variable for this attempt |
+| `FRONTIER_ENABLED` | False | **True** | 077→079 continuous bidirectional frontier |
+| `FRONTIER_SEED_FROM` | None | None (unchanged) | 079 also ran with no seed |
+| `LEARNING_RATE_CNN` | 5e-5 (086 stabilize) | **7e-5** | 083 entry: "Hyperparams = 075's gym-stabilize settings (lr 7e-5...)" — 7e-5 was the value carried from 076 through 079 into the gym pivot |
+| `ENT_COEF_CNN` (start) | 0.005 flat (086) | **0.02** (anneals to 0.005 over 8M, unchanged `ENT_COEF_CNN_END`/`ENT_ANNEAL_STEPS_CNN`) | same 083 cross-reference |
+| `TOTAL_TIMESTEPS_CNN` | 5,000,000 | **60,000,000** | RL-1's own gate (findings §4) — NOT 079's 480M budget (that's R5, later) |
+| `CHECKPOINT_FREQ_CNN` | 1,000,000 (082 warm-test) | **5,000,000** | 077-081 corridor-era value; 082's 1M was for an abandoned/unresolved warm test |
+| `INIT_FROM_CHECKPOINT` | `agent_085_4999980` | **`agent_079_129999792`** | Task 3 spec — the Route-30-capable checkpoint |
+| `env/pokemon_env_cnn.py: MAX_STEPS` | 2**17 (131072, agent_082) | **2**16 (65536)** | agent_082 bumped this as an isolated warm-start test that was never resolved (project pivoted to the gym slice before a result was logged); reverted to 079's actual episode length rather than silently carrying forward an untested variable — outside the brief's stated file list but required by "episode length as 079 used" |
+| `EGG_MARKER`, `N_STEPS_CNN`, `BATCH_SIZE_CNN`, `N_EPOCHS_CNN`, `FRONTIER_N_ENVS/P/MAX_STEPS/MAX_CELLS/CELL_K/EPSILON`, `GAMMA`, `GAE_LAMBDA` | — | unchanged | never touched by the gym pivot |
+
+**Kill criterion (findings §4, RL-1 row):** `nav/reach_route31` still 0.0 at 40M → stop (confinement
+alone insufficient even warm-started). Extend toward 200–480M (R5) only if it cracks.
+
+**Smoke test (background, ~1 min, killed cleanly via `pkill -f "python -m agents.rl.train_cnn"`):**
+CUDA detected (RTX 5080, 16.6 GB), frontier archive enabled at `runs/frontier_archive/agent_088`
+(4/12 frontier envs), checkpoint warm-started from `agent_079_129999792_steps.zip`, `learning_rate`
+overridden to `7e-05`, `ent_coef` to `0.02`, TensorBoard dir `runs/agent_088_1` created, first two
+rollouts logged cleanly (fps ≈2645, `front/reach_route31` 0.867 — the frontier envs already sit past
+Route 31 from the warm checkpoint's own archive; `nav/*` all 0 as expected for a single rollout), no
+traceback.
+
+**Real launch:** `nohup .venv/bin/python -m agents.rl.train_cnn > runs/agent_088_launch.log 2>&1 &`,
+**PID 26490**, launched 2026-07-06 ~14:30. Confirmed alive >60s, visible in `nvidia-smi` as a
+`C` (compute) process using ~1 GB VRAM on the RTX 5080. Logs: `runs/agent_088_launch.log`,
+`runs/agent_088_2` (TensorBoard), `runs/checkpoints/agent_088/` (every 5M steps).

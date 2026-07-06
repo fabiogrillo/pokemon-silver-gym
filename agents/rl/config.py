@@ -7,7 +7,27 @@
 # The full historical mapping (PPO_N / PPO_CNN_N* → Agent NNN) lives at the top of
 # training_log.md. The currently-live run still uses its legacy name (it was launched
 # before the rename); the NEXT run is agent_046.
-RUN_NAME = "agent_087"    # GYM TASK v5 — STRUCTURAL FIX: CONFINE_TO_GYM=True — leaving GYM_MAP ends the
+RUN_NAME = "agent_088"    # CORRIDOR FINAL ATTEMPT — RL-1 (R1 + R4), per
+                          # docs/superpowers/specs/2026-07-06-final-attempt-findings.md §4. Hypothesis: the
+                          # agent_079 recipe (bidirectional Go-Explore frontier + Violet curriculum anchors +
+                          # EXPLORATION_SCALE=4.0) already connects the corridor archive end-to-end and pushes
+                          # the START policy past the Phase-1 wall segment-by-segment (Cherrygrove 1.0 @28M,
+                          # Route-30-gate 1.0 @37M) — but then PLATEAUS at Route 30 (`nav/reach_route31`=0 for
+                          # ~83M) because EXPLORATION_SCALE=4.0 lures the policy into dead-end maps (Dark
+                          # Cave/Sprout Tower: 235 cave cells harvested). R1 generalizes the agent_087 lesson
+                          # (CONFINE_TO_GYM: 40%→100% badge by REMOVING the wander OPTION, not reward tweaks):
+                          # new gated `CONFINE_TO_CORRIDOR` flag ends the episode the instant the agent leaves
+                          # CORRIDOR_LEGAL, so off-path maps stop being places where episodes go to die. R4
+                          # (frontier re-scored by waypoint ordinal, already landed — commits 25188af/c0dbebb)
+                          # concentrates ε-greedy resets at the leading edge instead of uniformly. WARM from
+                          # `agent_079@129999792` (Route-30-capable), 60M budget (RL-1's gate, not 079's
+                          # own 480M). Every other knob below is REVERTED from agent_087's gym-slice state
+                          # back to the agent_079 corridor recipe (recovered from training_log.md's agent_079
+                          # entry + this file's own historical comments) — deltas documented inline and in
+                          # training_log.md's Agent 088 entry.
+                          # KILL CRITERION (findings §4, RL-1 row): `nav/reach_route31` still 0.0 at 40M →
+                          # stop (confinement alone insufficient even warm-started).
+# (prior 087) GYM TASK v5 — STRUCTURAL FIX: CONFINE_TO_GYM=True — leaving GYM_MAP ends the
                           # episode, so the agent CANNOT wander out to wild-grind (the stable basin that
                           # capped 083-086 at ~40%). Forces it to solve the gym. WARM from 085@5M (40%),
                           # pure 12×gym, engage reward kept, lr 5e-5, flat entropy 0.005, 5M. One new
@@ -196,14 +216,13 @@ N_ENVS_CNN = 12               # PyBoy CPU-bound (16 cores) — 12 envs improves 
 # approach is exhausted. 058 relies on the start policy's OWN exploration (entropy schedule) + the
 # directional reset's southward income, warm from 053's pickup-100% base. No segregation possible.
 CURRICULUM_STATES_CNN = [
-    # agent_086 STABILIZATION: keep PURE 12×gym (same task as 085) — only lr/entropy change to consolidate
-    # the 40% peak. Counts must sum to N_ENVS_CNN (12).
-    ("saves/violet_city_gym.state",     12),
-    # (prior 084 MIXED) ("saves/violet_city_gym.state", 6), ("saves/falkner_battle.state", 6)  # eval badge 0%
-    # (prior 078 RL v2.2 BIDIRECTIONAL Go-Explore — kept for reference)
-    # ("saves/violet_city.state",         3),   # Violet end — explore south, harvest Route31 cells
-    # ("saves/violet_city_gym.state",     2),   # learn the Falkner fight (Totodile lv15)
-    # ("saves/egg_delivered_clean.state", 7),   # true start; last 4 are the frontier envs
+    # agent_088: REVERTED to the agent_079/078 corridor curriculum (RL v2.2/v2.3 BIDIRECTIONAL Go-Explore) —
+    # the gym-only 12×violet_city_gym slice (083-087) was for the RL-vs-LLM gym comparison, not this task.
+    # Counts must sum to N_ENVS_CNN (12); last 4 (of the 7 start envs) are the dedicated frontier envs.
+    ("saves/violet_city.state",         3),   # Violet end — explore south, harvest Route31 cells
+    ("saves/violet_city_gym.state",     2),   # learn the Falkner fight (Totodile lv15)
+    ("saves/egg_delivered_clean.state", 7),   # true start; last 4 are the frontier envs
+    # (prior 087/086/085/084/083 GYM TASK, superseded for this run) 12×violet_city_gym / mixed gym+falkner_battle
 ]
 
 # ── agent_059: Go-Explore / frontier reset (start-continuous). A fraction of resets restart from a
@@ -216,27 +235,37 @@ CURRICULUM_STATES_CNN = [
 # so the CNN can SEE the pickup vs carry mode. Default-off elsewhere (the warm-marker run 063 failed); only the
 # cold synthesis run uses it. Passed to the env via make_env.
 EGG_MARKER         = False       # agent_069: OFF — the carry specialist is single-mode (always carrying), no
-                                 # pickup/carry separation needed.
-EXPLORATION_SCALE  = 0.0         # agent_083: OFF — anti-wander for the gym task (per 071): new-tile/new-map pay
-                                 # nothing, so the only income is the Falkner FIGHT (gym damage + trainer + badge),
-                                 # preventing the agent from leaving the gym to wild-grind.
-CONFINE_TO_GYM     = True        # agent_087: end the episode if the agent leaves GYM_MAP (10,7). Reward tweaks
-                                 # couldn't beat the wander-grind basin (083-086 ≤40%); removing the wander
-                                 # OPTION is the structural fix. Off for the corridor task (set False).
-CONFINE_TO_CORRIDOR = False      # R1 (final-attempt findings §2, technique R1): end the episode if the agent
-                                 # leaves CORRIDOR_LEGAL (env/rewards.py). Structural fix for agent_079's
-                                 # off-path lure (Dark Cave / Sprout Tower episodes died earning nothing) —
-                                 # removes the OPTION instead of relying on reward tweaks. Default False here;
-                                 # turned on for the corridor-task run (Task 3).
+                                 # pickup/carry separation needed. (unchanged since; 079 also ran marker-off.)
+EXPLORATION_SCALE  = 4.0         # agent_088: REVERTED to agent_079's value (was 0.0 for the 083-087 gym slice,
+                                 # anti-wander per 071 — irrelevant here, there's no corridor to explore in the
+                                 # gym task). At 4.0 a new-MAP crossing pays +0.4 post (> a capped battle win),
+                                 # so progressing across map boundaries out-earns grinding — the driver that
+                                 # connected the corridor archive end-to-end in 079. See CONFINE_TO_CORRIDOR
+                                 # below for the fix to 079's failure mode (this scale luring off-path).
+CONFINE_TO_GYM     = False       # agent_088: REVERTED — off for the corridor task (was True for 087's gym-only
+                                 # slice). Leaving GYM_MAP must NOT end the episode; the gym is just the final
+                                 # corridor waypoint here, not the whole task.
+CONFINE_TO_CORRIDOR = True       # agent_088: R1 (final-attempt findings §2/§4, technique R1) — TURNED ON for
+                                 # this run. Ends the episode if the agent leaves CORRIDOR_LEGAL (env/rewards.py)
+                                 # — the structural fix for agent_079's off-path lure (Dark Cave / Sprout Tower
+                                 # episodes died earning nothing, 235 cave cells harvested while
+                                 # nav/reach_route31 stayed 0.0 for ~83M). Generalizes agent_087's
+                                 # CONFINE_TO_GYM lesson (40%→100% badge via removing the OPTION, not reward
+                                 # tweaks) to the corridor. Kill criterion: nav/reach_route31 still 0.0 at 40M.
 # (prior) agent_079: BOOSTED 1.0→4.0 — at 1.0 the policy grinds Route 29 and never
                                  # explores west (078 stalled). At 4.0 a new-MAP crossing pays +0.4 post (> a
                                  # capped battle win), so progressing across the Route-29→Cherrygrove boundary
                                  # out-earns grinding (Whidden's dense-exploration-primary recipe). Dial back
                                  # later if it over-wanders past the gym. (1.0 = normal Phase-1 exploration.)
-FRONTIER_ENABLED   = False       # agent_083: OFF — irrelevant for the bounded gym task (no corridor to explore).
+FRONTIER_ENABLED   = True        # agent_088: REVERTED — ON (was False for the bounded 083-087 gym task, which
+                                 # has no corridor to explore). agent_079 ran the bidirectional Go-Explore
+                                 # frontier (continued from 077/078) — reinstated here, now re-scored by
+                                 # waypoint ordinal (R4, landed in frontier_archive.py commits 25188af/c0dbebb)
+                                 # so ε-greedy resets concentrate at the leading edge instead of uniformly.
 # (prior) agent_077: ON — Go-Explore reset manufactures state diversity to break the
                                  # Route-29 wall (12 envs alone can't; see training_log agent_067 seeding result).
 FRONTIER_SEED_FROM = None  # agent_077: NO seed — agent_065's seeds are carry-mode states from a DIFFERENT task.
+                           # (agent_088: unchanged — 079 also ran with no seed.)
                            # (prior) "runs/frontier_archive/agent_065"  # agent_067: seed the (cleared) archive with these
                                   # carry-state save-states at launch, to bootstrap the stuck cold start with
                                   # state diversity. None = no seeding (normal). Marker applies at obs-time, so
@@ -261,13 +290,21 @@ FRONTIER_EPSILON   = 0.1          # uniform-sampling floor (diversity vs frontie
 FRONTIER_ROOT      = "runs/frontier_archive"   # per-run subdir <FRONTIER_ROOT>/<RUN_NAME>/ (cleared at start)
 
 # CNN hyperparameters (Atari-style defaults adapted for Pokemon)
-LEARNING_RATE_CNN = 5e-5      # agent_086: LOWERED 7e-5→5e-5 to stabilize the 40% peak (085 drifted at 7e-5).
+LEARNING_RATE_CNN = 7e-5      # agent_088: REVERTED to the 075/076-085 corridor-era value (was 5e-5, agent_086's
+                              # gym-stabilization tweak — irrelevant here, that consolidated a drifting 40%
+                              # gym peak). 079 ran with 7e-5 (083's entry: "Hyperparams = 075's gym-stabilize
+                              # settings (lr 7e-5, ent schedule 0.02→0.005 over 8M)" — those settings were
+                              # carried over unchanged from the 076-079 corridor runs into the gym pivot).
+# (prior 086, gym-only) agent_086: LOWERED 7e-5→5e-5 to stabilize the 40% gym peak (085 drifted at 7e-5).
 # (prior) agent_075: INTERMEDIATE lr — 1e-4 (072) learned but overshot into bad moves;
                               # 5e-5 (074) too gentle to learn. 7e-5 + the entropy schedule = learn then commit.
 N_STEPS_CNN       = 2048      # smaller rollout (memory: 4 envs × 2048 × 72×80×12 ~ 450MB)
 BATCH_SIZE_CNN    = 512       # bigger minibatch, exploits GPU
 N_EPOCHS_CNN      = 4         # fewer epochs (more data per rollout)
-ENT_COEF_CNN      = 0.005     # agent_086: LOW + FLAT (start==end==0.005) — no exploration anneal, so the policy
+ENT_COEF_CNN      = 0.02      # agent_088: REVERTED to the 075-085 schedule-start value (was 0.005 flat, agent_086's
+                              # gym-only anti-drift tweak). ENT_COEF_CNN_END/ENT_ANNEAL_STEPS_CNN below are
+                              # already at the 075-085 corridor-era values (0.005 / 8M) — unchanged.
+# (prior 086, gym-only) agent_086: LOW + FLAT (start==end==0.005) — no exploration anneal, so the policy
                               # CONSOLIDATES the 40% winning behavior instead of exploring off it (085's drift).
 # (prior) agent_075: SCHEDULE START. Explore the battle-menu move selection early (0.02),
                               # then anneal to 0.005 (commit to the winning move) over ENT_ANNEAL_STEPS — the fix
@@ -283,7 +320,11 @@ ENT_COEF_CNN      = 0.005     # agent_086: LOW + FLAT (start==end==0.005) — no
 ENT_COEF_CNN_END  = 0.005     # agent_075: commit low after exploring the move
 ENT_ANNEAL_STEPS_CNN = 8_000_000   # agent_075: anneal 0.02→0.005 over the first 8M, then hold 0.005
 
-TOTAL_TIMESTEPS_CNN = 5_000_000     # agent_086: 5M short stabilization — consolidate the 085@5M peak.
+TOTAL_TIMESTEPS_CNN = 60_000_000    # agent_088: RL-1's gate (findings §4) — NOT a revert to 079's own 480M
+                                    # budget (that's R5, a later attempt); 40M kill gate + 20M headroom to
+                                    # confirm a clean read past the gate. Extend toward 200-480M (R5) only if
+                                    # nav/reach_route31 cracks.
+# (prior 086, gym-only) agent_086: 5M short stabilization — consolidate the 085@5M peak.
 # (prior) agent_084: 10M — the fight consolidates fast from warm+falkner_battle force.
 # (prior) agent_082: 20M warm test of longer episodes (MAX_STEPS 131k).
 # (prior 081) ~2-day LONG run with the corridor-only exploration whitelist.
@@ -305,7 +346,10 @@ TOTAL_TIMESTEPS_CNN = 5_000_000     # agent_086: 5M short stabilization — cons
                                     #   50M: nav/egg_delivered_rate ≥ 0.2, nav/reach_route31 > 0.1
                                     #  100M: nav/badge_rate > 0 (else if reach_gym > 0.3: bump gym damage
                                     #        3→5 and badge 30→50, warm-restart from the 100M checkpoint)
-CHECKPOINT_FREQ_CNN = 1_000_000     # agent_082: 1M for the warm test. (prior 5M agent_081)
+CHECKPOINT_FREQ_CNN = 5_000_000     # agent_088: REVERTED to the 077-081 corridor-era value (was 1M, agent_082's
+                                    # warm-test-only tweak — that experiment was abandoned/never resolved, see
+                                    # env/pokemon_env_cnn.py's MAX_STEPS constant, also reverted for this run).
+# (prior 082, abandoned) agent_082: 1M for the warm test. (prior 5M agent_081)
                                     # agent_077: 5M → ~96 checkpoints over 480M for the map-progression montage.
                                     # (prior 500_000) agent_076: 500k → several frames across the short validation run so the
                                     # map-visualization montage can show the journey extending over training.
@@ -317,7 +361,10 @@ CHECKPOINT_FREQ_CNN = 1_000_000     # agent_082: 1M for the warm test. (prior 5M
 # Warm-start for the REVERSE CURRICULUM: each stage fine-tunes from the PREVIOUS stage's *_final.zip.
 # Stage 1 starts from PPO_CNN_5_final (already knows New Bark → Cherrygrove → the gate area).
 # UPDATE this line between stages (see the table above). Set to None for a cold start.
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_085/agent_085_4999980_steps.zip"   # agent_086: WARM from 085@5M —
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_079/agent_079_129999792_steps.zip"   # agent_088: WARM from
+                              # 079@130M (Route-30-capable — same checkpoint 080/082 warmed from) for RL-1.
+                              # CONFINE_TO_CORRIDOR is the new variable added on top of this exact base.
+# (prior 087, gym-only) "runs/checkpoints/agent_085/agent_085_4999980_steps.zip"   # agent_086: WARM from 085@5M —
                               # the 40%-badge peak. Stabilize (lower lr/entropy) to consolidate it, not drift off.
 # (prior 085) "runs/checkpoints/agent_083/agent_083_4999980_steps.zip"   # WARM from 083@5M (eval badge 10%).
 # (prior 083) "runs/checkpoints/agent_050/agent_050_9999984_steps.zip"   # WARM from 050@10M —
