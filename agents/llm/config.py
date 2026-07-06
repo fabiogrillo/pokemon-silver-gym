@@ -35,7 +35,7 @@ class LLMConfig:
     base_url: str = "http://localhost:11434/v1"
     api_key: str = "ollama"
     rom_path: str = "pokemon_rom.gbc"
-    state_path: str = "saves/violet_city_gym.state"
+    state_path: str = "saves/egg_delivered_clean.state"  # corridor task (final attempt); the gym slice used saves/violet_city_gym.state
     max_steps: int = 500
     token_budget: int = 4_000_000
     temperature: float = 0.3

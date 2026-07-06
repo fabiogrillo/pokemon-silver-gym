@@ -2371,3 +2371,34 @@ traceback.
 **PID 26490**, launched 2026-07-06 ~14:30. Confirmed alive >60s, visible in `nvidia-smi` as a
 `C` (compute) process using ~1 GB VRAM on the RTX 5080. Logs: `runs/agent_088_launch.log`,
 `runs/agent_088_2` (TensorBoard), `runs/checkpoints/agent_088/` (every 5M steps).
+
+---
+
+## LLM final attempt (spatial compass arc)
+
+Corridor task (New Bark → Violet Gym badge) from `saves/egg_delivered_clean.state`, per
+`docs/superpowers/plans/2026-07-06-llm-spatial-compass.md`. `LLMConfig.state_path` default now points
+at the corridor state (the gym slice used `saves/violet_city_gym.state`).
+
+### LLM-1 — calibration (L2 coordinate fix only)
+
+- **Date:** 2026-07-06. **Config:** qwen3-vl:8b (Ollama), corridor start (New Bark, map (24,4)),
+  confinement off per the plan (but see caveat below), `max_steps=500`, temperature 0.3, image on.
+- **Summary:** steps 500, tokens 1,634,258, battles_won 0, tiles 9, **max_waypoint 0**,
+  stopped `max_steps`, wall clock 5,797 s (~97 min, ~11.6 s/step).
+  Trace: `runs/llm_logs/run_1783341589.jsonl`.
+- **Behavior:** the agent never leaves New Bark Town — all 500 steps on map (24,4), only 9 tiles
+  visited. Its thoughts misground the entire episode: the stale gym GOAL text makes it believe it is
+  "in the Violet City Gym trying to reach Falkner" while standing in New Bark, so it has no reason to
+  look for the town exit at all. By step 11 it drifts to true (7,15) and stays parked there for the
+  remaining 489 steps, issuing `move left` 428 times (the tool's "moved left x1" reports presses, not
+  displacement — position never changes) plus 58 empty-response fallback `a`-presses; the anti-fixation
+  note ("you already tried left — blocked wall") is read in the thoughts but ignored in the action.
+  The L2 fix itself works: thoughts quote the true un-swapped coordinates, e.g. "(7,15)".
+- **Caveat for LLM-2:** `agents/llm/agent.py` still hardcodes the gym-slice confinement — `home_map`
+  locks to the STARTING map, `probe_walkable` filters out any direction that changes the map (exits),
+  and map changes are undone. 0 undo events fired this run (the agent never reached an exit), but even
+  a perfect navigator could not have left New Bark. This machinery must be disabled/parameterized for
+  the corridor before LLM-2, or `max_waypoint` can never exceed 0.
+- **Verdict:** navigation fails exactly as the findings doc predicts — this is the calibration
+  baseline for L1 (`navigate_to` A* tool).
