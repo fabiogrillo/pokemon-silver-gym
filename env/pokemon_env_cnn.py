@@ -26,6 +26,12 @@ MAX_STEPS = 2**16  # 65536 — agent_088: REVERTED to agent_079's episode length
 # Ordinal 3 (ROUTE_31, post-gate) = the agent has CLEARED the two-trainer story gate.
 WAYPOINT_ORDER = [CHERRYGROVE, ROUTE_30_GATE, ROUTE_31, VIOLET_CITY, GYM_MAP]
 
+DYN_BUDGET_BASE = 2**14  # 16384 — R2b: dynamic episode budget base cap (earned-episode-length trick,
+                         # Pokémon-Red paper). Start/curriculum episodes begin capped at this short
+                         # budget and only earn more steps (up to MAX_STEPS) by reaching new corridor
+                         # waypoints, so aimless wandering is truncated fast while genuine progress is
+                         # rewarded with room to keep going.
+
 class PokemonEnvCNN(gym.Env):
     """CNN-friendly Gymnasium environment for Pokemon Silver."""
     def __init__(self, rom_path, state_path, headless=True,
@@ -34,7 +40,7 @@ class PokemonEnvCNN(gym.Env):
                  frontier_root=None, p_frontier=0.0, frontier_max_cells=4000,
                  frontier_cell_k=4, frontier_epsilon=0.1, frontier_max_steps=MAX_STEPS,
                  egg_marker=False, exploration_scale=1.0, confine_to_gym=False,
-                 confine_to_corridor=False):
+                 confine_to_corridor=False, dynamic_episode_budget=False):
         """PyBoy-backed Gymnasium env with Dict obs (RGB image + state vector) for CnnPolicy.
 
         Go-Explore frontier reset (agent_059): if `frontier_root` is set, a fraction `p_frontier` of
@@ -115,6 +121,11 @@ class PokemonEnvCNN(gym.Env):
                                               # agent_079's off-path lure (Dark Cave / Sprout Tower episodes
                                               # died earning nothing; this removes the OPTION instead of
                                               # relying on reward tweaks). Off by default.
+        self.dynamic_episode_budget = dynamic_episode_budget  # R2b (Pokémon-Red paper trick): earned
+                                              # episode budget — start/curriculum episodes begin capped at
+                                              # DYN_BUDGET_BASE and grow the cap only when the episode's
+                                              # max waypoint ordinal increases. Frontier-origin episodes are
+                                              # untouched (they keep frontier_max_steps). Off by default.
 
     def _state_vector(self, ram):
         """RAM-derived self-state vector, all in [0,1]. Enemy fields are zeroed OUTSIDE battle because
@@ -206,7 +217,14 @@ class PokemonEnvCNN(gym.Env):
         # Track furthest route waypoint reached this episode (nav-progress logging, not reward)
         current_map = (ram_state["map_bank"], ram_state["map_number"])
         if current_map in WAYPOINT_ORDER:
-            self.max_waypoint = max(self.max_waypoint, WAYPOINT_ORDER.index(current_map) + 1)
+            new_max_waypoint = max(self.max_waypoint, WAYPOINT_ORDER.index(current_map) + 1)
+            # R2b: dynamic episode budget — grow the step cap the instant the episode reaches a NEW
+            # waypoint (long episodes must be earned). Frontier-origin episodes keep their existing
+            # (shorter) frontier_max_steps cap untouched — this only applies to start/curriculum episodes.
+            if (self.dynamic_episode_budget and not self._from_frontier
+                    and new_max_waypoint > self.max_waypoint):
+                self._max_steps = min(MAX_STEPS, DYN_BUDGET_BASE * (1 + new_max_waypoint))
+            self.max_waypoint = new_max_waypoint
 
         # Track the southward return front while carrying the undelivered egg (telemetry only)
         if (egg_now and not (ram_state["flag_elm_mr_pokemon"] & ELM_BIT)
@@ -330,7 +348,14 @@ class PokemonEnvCNN(gym.Env):
             self._from_frontier = False
         # agent_062: frontier episodes get the shorter cap (they end on delivery anyway); start
         # episodes keep the full MAX_STEPS for the whole start→pickup→deliver→Phase-2 trajectory.
-        self._max_steps = self.frontier_max_steps if self._from_frontier else MAX_STEPS
+        # R2b: dynamic_episode_budget overrides the start-episode cap to the earned-budget base
+        # (grows in step() as new waypoints are reached); frontier episodes are unaffected.
+        if self._from_frontier:
+            self._max_steps = self.frontier_max_steps
+        elif self.dynamic_episode_budget:
+            self._max_steps = DYN_BUDGET_BASE
+        else:
+            self._max_steps = MAX_STEPS
 
         self.steps = 0
         self.episode_count += 1

@@ -257,6 +257,11 @@ CONFINE_TO_CORRIDOR = True       # agent_088: R1 (final-attempt findings §2/§4
                                  # capped battle win), so progressing across the Route-29→Cherrygrove boundary
                                  # out-earns grinding (Whidden's dense-exploration-primary recipe). Dial back
                                  # later if it over-wanders past the gym. (1.0 = normal Phase-1 exploration.)
+DYNAMIC_EPISODE_BUDGET = False   # R2b: gated "earned episode budget" (Pokémon-Red paper trick) — start/
+                                 # curriculum episodes begin capped at DYN_BUDGET_BASE (16384 steps) and the
+                                 # cap only grows (up to MAX_STEPS) when the episode reaches a NEW corridor
+                                 # waypoint. Additive + off by default; Task 1 lands the gated env feature,
+                                 # Task 2 flips this True for the actual RL-2 attempt.
 FRONTIER_ENABLED   = True        # agent_088: REVERTED — ON (was False for the bounded 083-087 gym task, which
                                  # has no corridor to explore). agent_079 ran the bidirectional Go-Explore
                                  # frontier (continued from 077/078) — reinstated here, now re-scored by
