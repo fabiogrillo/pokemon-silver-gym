@@ -22,6 +22,7 @@ SYSTEM_PROMPT = (
     "blocking your path and is about to battle you — press 'a' REPEATEDLY (it can take ~10 presses) "
     "to advance the dialogue until the battle starts. Once a battle ENDS, go back to navigating: "
     "MOVE toward Falkner — do not keep pressing 'a'. "
+    "Coordinates: x grows EAST, y grows SOUTH; moving up decreases y.\n\n"
     + GOAL
 )
 

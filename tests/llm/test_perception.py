@@ -40,7 +40,8 @@ def _base_state(**over):
 def test_overworld_text_has_position_and_no_battle():
     txt = format_state_text(_base_state())
     assert "Map 24-5" in txt
-    assert "(4, 6)" in txt
+    # ram local_x/local_y are swapped (wYCoord/wXCoord); perception must report TRUE (x, y)
+    assert "(6, 4)" in txt
     assert "Overworld" in txt
     assert "Battle" not in txt
 

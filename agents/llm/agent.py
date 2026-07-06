@@ -2,7 +2,7 @@ import io
 import time
 from env.actions import ACTIONS
 from .config import SYSTEM_PROMPT
-from .perception import build_user_content
+from .perception import build_user_content, waypoint_ordinal
 from .tools import OVERWORLD_TOOLS, BATTLE_TOOLS, execute_tool, validate_tool_call, ToolValidationError
 from .memory import ShortTermMemory
 from .llm_client import OllamaClient
@@ -49,6 +49,7 @@ class ReActAgent:
         cfg = self.cfg
         mem = ShortTermMemory(cfg.stuck_window * 2, cfg.stuck_window, cfg.stuck_radius)
         tiles, tokens, battles_won = set(), 0, 0
+        max_wp = 0
         prev_battle = 0
         stopped = "max_steps"
         prev_xy, last_move, blocked = None, None, set()
@@ -59,6 +60,7 @@ class ReActAgent:
             state = reader.read_all()
             cur_xy = (state["map_bank"], state["map_number"], state["local_x"], state["local_y"])
             tiles.add(cur_xy)
+            max_wp = max(max_wp, waypoint_ordinal(state["map_bank"], state["map_number"]))
             if home_map is None:
                 home_map = (state["map_bank"], state["map_number"])
             # Clean pre-action snapshot, taken BEFORE the probe so it never carries a warp the
@@ -162,4 +164,5 @@ class ReActAgent:
                 on_step(step, state, out, obs, frame)
 
         return {"badge": reader.read_all()["zephyr"], "steps": step + 1, "tokens": tokens,
-                "battles_won": battles_won, "tiles": len(tiles), "stopped": stopped}
+                "battles_won": battles_won, "tiles": len(tiles), "stopped": stopped,
+                "max_waypoint": max_wp}
