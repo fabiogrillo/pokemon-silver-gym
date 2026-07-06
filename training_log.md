@@ -2413,3 +2413,58 @@ stall — the 079 failure mode (Dark Cave farming) is GONE, confirming the struc
 frontier side reached the gym (`front/ep_max_waypoint 5.0`), so the archive spans the corridor
 end-to-end; what's missing is start-policy consolidation past wp 2 — exactly what RL-2's staged
 resets + event-scaled episode budget (R2) target. RL-2 will warm from `agent_088_39999936_steps.zip`.
+
+---
+
+## Agent 089 — CORRIDOR FINAL ATTEMPT RL-2 (RL-1 + R2) (2026-07-07, LAUNCH PENDING)
+
+**Hypothesis (findings §2/§4, RL-2 row):** RL-1 proved the structural half — corridor confinement
+killed the off-path stall and the start policy consolidated wp 0→2 — but plateaued at the Route-30
+gate while the frontier archive already spans the whole corridor (`front/ep_max_waypoint` 5.0). The
+gap is start-POLICY CONSOLIDATION lagging the archive, not missing exploration. **R2** attacks that
+consolidation lag directly with two structural, additive tricks: **(a) staged resets** — curriculum
+env slots reset from the corridor's own on-corridor intermediate saves (all egg-delivered, same story
+flags, so the foreign-state segregation that ruled out the 047-051 curricula does not apply), putting
+direct gradient AT the lagging Route-30→31→Violet segment every rollout instead of only via the
+shared archive; **(b) earned episode budget** (`DYNAMIC_EPISODE_BUDGET=True`, env feature commit
+2c6ee45, the Pokémon-Red paper trick arXiv:2502.19920) — start/curriculum episodes begin capped at
+16,384 steps and only earn a longer cap (`min(65536, 16384*(1+waypoint_ordinal))`) by reaching a NEW
+waypoint, so workers desync and the gradient concentrates on the frontier segment instead of long
+tail-wandering after a stall.
+
+**Config deltas vs 088** (everything else identical — CONFINE_TO_CORRIDOR=True, EXPLORATION_SCALE=4.0,
+frontier on/4 envs/waypoint-scored, lr 7e-5, ent 0.02→0.005@8M, 60M budget, checkpoint every 5M):
+
+| Field | 088 (RL-1) | 089 (RL-2) |
+|---|---|---|
+| `RUN_NAME` | agent_088 | **agent_089** |
+| `INIT_FROM_CHECKPOINT` | `agent_079_129999792` | **`agent_088_39999936`** (RL-1's kill-point checkpoint: wp 0→2 consolidated) |
+| `DYNAMIC_EPISODE_BUDGET` | False (feature not yet landed at launch) | **True** (R2b) |
+| `CURRICULUM_STATES_CNN` | 3×violet_city + 2×violet_city_gym + 7×egg_delivered_clean | **2×crossing + 2×route31 + 2×violet_city + 6×egg_delivered_clean** (R2a) |
+
+**Curriculum split math (N_ENVS_CNN=12):** majority 6/12 stays on `egg_delivered_clean.state` (the
+true start distribution); the other 6 split evenly (2 each) across the three staged saves past the
+wp-2 plateau (`crossing`, `route31`, `violet_city`). Env ranks: 0-1 crossing, 2-3 route31,
+4-5 violet_city, 6-11 egg_delivered_clean; with `FRONTIER_N_ENVS=4` the dedicated frontier ranks
+(8-11) land inside the egg_delivered_clean block exactly as in 088, ranks 6-7 stay pure-start.
+`is_start_env` matches only `egg_delivered_clean`, so the staged slots log under `front/` and `nav/`
+remains the clean success gate.
+
+**Kill criteria (findings §4 RL-2 row + tightened early gate):** no new segment
+(`nav/reach_violet` == 0.0) after 60M → stop; **also stop early at 30M if `nav/reach_route31` is
+still 0.0** (tighter than RL-1's 40M gate — the staged resets sit ON Route 31/Violet already, so a
+crack should show much sooner than an archive-mediated hand-off would).
+
+**Smoke test (2026-07-07, ~3 min background boot, GPU shared with the Ollama eval — smoke only, NO
+launch):** CUDA detected (RTX 5080, 16.6 GB), frontier archive enabled at
+`runs/frontier_archive/agent_089` (4/12 frontier envs), warm-start confirmed from
+`agent_088_39999936_steps.zip`, `learning_rate` overridden to `7e-05`, `ent_coef` to `0.02`,
+TensorBoard dir `runs/agent_089_1` created, 12 SubprocVecEnv workers up (forkserver), 8 rollouts
+logged cleanly (fps ~1190-1373 with Ollama co-resident on the GPU; first rollout already shows
+`front/reach_route31` 1.0 from the staged envs, `nav/*` 0 as expected), 185 frontier cells harvested,
+no traceback. Killed cleanly via SIGTERM to the exact smoke PID (47641); all 14 child PIDs verified
+gone, GPU freed (only the Ollama eval process remains).
+
+**LAUNCH PENDING** (controller launches when the GPU frees up after the LLM-2 runs).
+Launch command (controller's step, verbatim from 088's protocol):
+`nohup .venv/bin/python -m agents.rl.train_cnn > runs/agent_089_launch.log 2>&1 &`
