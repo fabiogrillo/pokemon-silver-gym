@@ -1,47 +1,12 @@
 import io
 import time
-from env.actions import ACTIONS
 from .config import SYSTEM_PROMPT
 from .perception import build_user_content, waypoint_ordinal
-from .tools import OVERWORLD_TOOLS, BATTLE_TOOLS, execute_tool, validate_tool_call, ToolValidationError
+from .tools import (OVERWORLD_TOOLS, BATTLE_TOOLS, execute_tool, validate_tool_call,
+                     ToolValidationError, probe_walkable)
 from .memory import ShortTermMemory
 from .llm_client import OllamaClient
 from .legs import LegTracker
-
-_DIRS = ("up", "down", "left", "right")
-
-
-def probe_walkable(wrapper, reader, n=24, presses=3, confine_to_home_map=False):
-    """Return the directions the player can actually step in, by save->try->restore.
-
-    For each direction we reload a snapshot, press it `presses` times (the first press may only
-    turn the character), and see if the local position changed. This is the navigation signal the
-    vision-only model lacks: it cleanly distinguishes "I'm boxed in by a trainer/dialogue" (no
-    direction walkable -> press 'a' to engage) from "I just need to walk on" (some direction open).
-    Pure read-only w.r.t. the real episode: the final reload restores the pre-probe state exactly.
-
-    When `confine_to_home_map` is True (gym-slice harness only), a direction that changes the map
-    is treated as NOT walkable — this steers the gym-only agent away from the exit. For the
-    corridor task (the default) map-changing directions ARE genuine exits and are reported as
-    walkable, since leaving the current map is exactly how the agent makes progress.
-    """
-    snap = wrapper.save_state_bytes()
-    s = reader.read_all()
-    before = (s["local_x"], s["local_y"])
-    home_map = (s["map_bank"], s["map_number"])
-    open_dirs = []
-    for d in _DIRS:
-        wrapper.pyboy.load_state(io.BytesIO(snap))
-        for _ in range(presses):
-            wrapper.step(ACTIONS.index(d), n=n)
-        s2 = reader.read_all()
-        moved = (s2["local_x"], s2["local_y"]) != before
-        same_map = (s2["map_bank"], s2["map_number"]) == home_map
-        if moved and (same_map or not confine_to_home_map):
-            open_dirs.append(d)
-    wrapper.pyboy.load_state(io.BytesIO(snap))
-    wrapper.pyboy.tick(1)  # refresh the rendered frame after the final restore
-    return open_dirs
 
 
 class ReActAgent:

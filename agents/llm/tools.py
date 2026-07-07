@@ -1,3 +1,5 @@
+import io
+
 from . import pathfind
 from .perception import format_state_text
 from env.actions import ACTIONS
@@ -8,6 +10,79 @@ DIRECTIONS = ("up", "down", "left", "right")
 # PyBoyWrapper.step() indexes ACTIONS by an integer (it serves the RL discrete action
 # space). Map our validated button/direction names back to that index.
 _BTN_INDEX = {name: i for i, name in enumerate(ACTIONS)}
+
+
+def probe_walkable(wrapper, reader, n=24, presses=3, confine_to_home_map=False):
+    """Return the directions the player can actually step in, by save->try->restore.
+
+    For each direction we reload a snapshot, press it `presses` times (the first press may only
+    turn the character), and see if the local position changed. This is the navigation signal the
+    vision-only model lacks: it cleanly distinguishes "I'm boxed in by a trainer/dialogue" (no
+    direction walkable -> press 'a' to engage) from "I just need to walk on" (some direction open).
+    Pure read-only w.r.t. the real episode: the final reload restores the pre-probe state exactly.
+
+    When `confine_to_home_map` is True (gym-slice harness only), a direction that changes the map
+    is treated as NOT walkable — this steers the gym-only agent away from the exit. For the
+    corridor task (the default) map-changing directions ARE genuine exits and are reported as
+    walkable, since leaving the current map is exactly how the agent makes progress.
+
+    Lives here (not agents/llm/agent.py) so the navigate_to executor's probe-verified fallback
+    (see _execute_navigate's bug 5) can reuse the exact same live-emulator signal the ReAct loop
+    itself uses to advise the model, without an agent.py<->tools.py import cycle (agent.py already
+    imports from this module). agent.py re-exports/imports it from here for its per-step probe.
+    """
+    snap = wrapper.save_state_bytes()
+    s = reader.read_all()
+    before = (s["local_x"], s["local_y"])
+    home_map = (s["map_bank"], s["map_number"])
+    open_dirs = []
+    for d in DIRECTIONS:
+        wrapper.pyboy.load_state(io.BytesIO(snap))
+        for _ in range(presses):
+            wrapper.step(_BTN_INDEX[d], n=n)
+        s2 = reader.read_all()
+        moved = (s2["local_x"], s2["local_y"]) != before
+        same_map = (s2["map_bank"], s2["map_number"]) == home_map
+        if moved and (same_map or not confine_to_home_map):
+            open_dirs.append(d)
+    wrapper.pyboy.load_state(io.BytesIO(snap))
+    wrapper.pyboy.tick(1)  # refresh the rendered frame after the final restore
+    return open_dirs
+
+
+def _greedy_direction(open_dirs, current, goal):
+    """Pick the open direction that best advances `current` toward `goal`, for the probe-verified
+    fallback _execute_navigate falls back to when pathfind.plan() can't find a route (see bug 5).
+
+    "Best" = smallest post-step Manhattan distance to `goal`. Since a single step only ever
+    changes one axis by 1, any direction that walks along the correct axis (toward, not away from,
+    the goal) reduces the total Manhattan distance by exactly the same amount (1) — so whenever
+    both the correct x-direction and the correct y-direction are open, this is a tie by
+    construction, broken toward the axis with the larger remaining delta (closing the bigger gap
+    first). Directions that don't reduce distance at all are still ranked (least-bad first) so the
+    fallback always has an answer as long as ANY direction is open — see the docstring on why: the
+    caller needs to make forward progress even when no direction is actively "toward" the goal
+    (e.g. sidestepping around an obstacle).
+
+    Iterates in the canonical DIRECTIONS order (not `open_dirs`'s order) so ties are resolved the
+    same way regardless of what order the probe happened to return them in. Returns None if
+    `open_dirs` is empty (every direction is currently sealed).
+    """
+    open_set = set(open_dirs)
+    best_direction, best_key = None, None
+    dx = goal[0] - current[0]
+    dy = goal[1] - current[1]
+    for direction in DIRECTIONS:
+        if direction not in open_set:
+            continue
+        ddx, ddy = pathfind.DIR_DELTA[direction]
+        new_xy = (current[0] + ddx, current[1] + ddy)
+        dist = abs(new_xy[0] - goal[0]) + abs(new_xy[1] - goal[1])
+        axis_delta = abs(dx) if ddx != 0 else abs(dy)
+        key = (dist, -axis_delta)  # lower dist wins; among ties, larger axis_delta wins
+        if best_key is None or key < best_key:
+            best_direction, best_key = direction, key
+    return best_direction
 
 
 class ToolValidationError(Exception):
@@ -117,6 +192,12 @@ _BORDER_EXIT_RETRIES = 3
 # before concluding the target tile is genuinely blocked by terrain/a stationary obstacle -- see
 # _clear_blocking_interaction's docstring ("bug 4").
 _INTERACTION_CLEAR_RETRIES = 8
+# How many consecutive times the probe-verified greedy fallback (see bug 5 below) may fire in a
+# row -- i.e. pathfind.plan() failing repeatedly with no successful re-plan in between -- before
+# concluding the position is genuinely stuck (rather than just one roaming NPC that will likely
+# have moved on by the model's next tool call) and returning a non-terminal, self-describing
+# observation instead of spinning for the rest of _MAX_STEPS.
+_GREEDY_FALLBACK_LIMIT = 3
 
 
 def _clear_blocking_interaction(wrapper, ram_reader, cfg, start_map, cur_xy):
@@ -232,6 +313,22 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
        dialogue is advanced with 'a' -- see _clear_blocking_interaction's docstring for the full
        live-emulator trace. Fix: once a direction has exhausted _STEP_RETRIES with zero movement,
        try _clear_blocking_interaction before concluding the target is genuinely blocked.
+    5. plan() failing from the LIVE position: `blocked_tiles` (bug 1) only accumulates tiles this
+       call has already tried and failed to step into -- it can't see a roaming NPC standing
+       somewhere else on the route *before* A* ever tries to cross it, so `pathfind.plan()` can
+       return None (no path found on the static grid + blocked_tiles) purely because a currently-
+       occupied tile happens to sit on the only route the static grid knows about. The old executor
+       treated `plan() is None` as terminal and reported a permanent "no path", even though the
+       live emulator (unlike the stale grid) can always be asked directly whether a neighboring
+       tile is currently steppable -- this reproduced 957x and 334x "no path" stalls that a human
+       player would have simply walked around. Fix: when plan() fails (and we're not mid-ledge-hop,
+       point 3 above), fall back to `probe_walkable` -- the same save/try/restore emulator probe
+       the ReAct loop itself uses to advise the model -- and `_greedy_direction` picks whichever
+       open direction most reduces Manhattan distance to `goal`. Taking that one step and letting
+       the loop re-plan from the new tile self-heals the moment the NPC has moved off the blocking
+       tile (typically within a step or two). `_GREEDY_FALLBACK_LIMIT` consecutive fallbacks with
+       no successful re-plan in between (a genuinely sealed position, not a transient NPC) give up
+       with a non-terminal, self-describing observation instead of spinning for `_MAX_STEPS`.
     """
     goal = (args["x"], args["y"])
     start_map = _map_key(state0)
@@ -241,6 +338,8 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
     blocked_tiles: set = set()
     last_direction = None  # direction of the last successful step; feeds border_exit_direction's
                             # corner tie-break once we arrive at `goal` (see _finish_at_goal).
+    greedy_fallbacks = 0    # consecutive plan() failures resolved via the probe-verified fallback
+                            # (docstring point 5); reset to 0 the moment plan() succeeds again.
 
     for _ in range(_MAX_STEPS):
         if cur_xy == goal:
@@ -257,12 +356,35 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
         else:
             directions = pathfind.plan(state0["map_bank"], state0["map_number"], cur_xy, goal,
                                         grids=grids, blocked=frozenset(blocked_tiles))
-            if not directions:  # None (unreachable) -- goal already handled by the check above
-                return {"ok": False, "note": f"no path to ({goal[0]}, {goal[1]})",
-                        "stopped_early": True}
-            direction = directions[0]
-            dx, dy = pathfind.DIR_DELTA[direction]
-            target = (cur_xy[0] + dx, cur_xy[1] + dy)
+            if directions:  # goal-already-reached case is handled by the check above
+                greedy_fallbacks = 0
+                direction = directions[0]
+                dx, dy = pathfind.DIR_DELTA[direction]
+                target = (cur_xy[0] + dx, cur_xy[1] + dy)
+            else:
+                # plan() found no route from the live position (docstring point 5) -- expensive
+                # (4 save/restores), so only run the probe here, never on the happy path above.
+                greedy_fallbacks += 1
+                if greedy_fallbacks > _GREEDY_FALLBACK_LIMIT:
+                    return {"ok": False,
+                            "note": f"path blocked around ({cur_xy[0]}, {cur_xy[1]}) — a moving "
+                                    f"NPC may be in the way; try again",
+                            "stopped_early": True}
+                open_dirs = probe_walkable(wrapper, ram_reader, n=cfg.frames_per_press)
+                direction = _greedy_direction(open_dirs, cur_xy, goal)
+                if direction is None:
+                    # Every direction is sealed right now -- the same all-directions-blocked
+                    # signature _clear_blocking_interaction's docstring documents for a scripted
+                    # dialogue (bug 4), just caught before a step was ever attempted this time.
+                    outcome, new_xy = _clear_blocking_interaction(wrapper, ram_reader, cfg,
+                                                                    start_map, cur_xy)
+                    if outcome in ("battle", "map_change"):
+                        return {"ok": True, "note": f"navigated to ({new_xy[0]}, {new_xy[1]})",
+                                "stopped_early": True}
+                    if outcome == "moved":
+                        cur_xy = new_xy  # re-plan/re-probe from wherever the cutscene left us
+                    continue
+                target = None
 
         moved = False
         for _attempt in range(_STEP_RETRIES):
