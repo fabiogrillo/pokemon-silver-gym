@@ -1,4 +1,7 @@
+import json
+
 from agents.llm import legs
+from agents.rl.map_layout import MAP_INFO
 
 # Same GRIDS mapping as tests/llm/test_collision_grids.py -- the frozen set of committed grids.
 _GRID_PATHS = {
@@ -15,6 +18,26 @@ _GRID_PATHS = {
 _BORDER_LEG_SIDES = {
     (24, 4): "west", (24, 3): "west", (26, 3): "north", (26, 1): "north",
 }
+
+_OUTWARD = {"west": (-1, 0), "east": (1, 0), "north": (0, -1), "south": (0, 1)}
+
+
+def _load_grid(map_key):
+    with open(_GRID_PATHS[map_key]) as f:
+        return json.load(f)
+
+
+def _counterpart_is_walkable(map_key, tile, side, next_map):
+    """Independent re-derivation of the counterpart check (grids + MAP_INFO offsets only, no
+    legs.py internals): whether stepping one tile outward off `tile` on `map_key`'s `side` lands
+    on a walkable tile of `next_map`'s grid."""
+    ngrid = _load_grid(next_map)
+    off, noff = MAP_INFO[map_key].offset, MAP_INFO[next_map].offset
+    dx, dy = _OUTWARD[side]
+    nx = off[0] + tile[0] + dx - noff[0]
+    ny = off[1] + tile[1] + dy - noff[1]
+    in_bounds = 0 <= nx < ngrid["width"] and 0 <= ny < ngrid["height"]
+    return in_bounds and ngrid["walkable"][ny][nx] == 1
 
 
 def _synthetic_grid():
@@ -83,6 +106,53 @@ def test_border_leg_targets_land_on_their_declared_side():
         with open(_GRID_PATHS[leg.map_key]) as f:
             g = json.load(f)
         assert leg.target in legs.border_exits(g, side)
+
+
+def test_every_border_leg_target_has_a_walkable_counterpart_on_its_next_map():
+    # The core property of the fix: a GSC border crossing only succeeds if the ARRIVAL tile on the
+    # neighboring map is also walkable, so every plain border-exit leg's resolved target must have
+    # a walkable counterpart on its (now explicit) next_map. Re-derived independently from the two
+    # grids + MAP_INFO offsets (see _counterpart_is_walkable above), not via legs.py's own helper.
+    for leg in legs.LEGS:
+        side = _BORDER_LEG_SIDES.get(leg.map_key)
+        if side is None:
+            continue  # override leg (doors / Falkner), not a border-adjacency crossing
+        assert leg.next_map is not None, leg
+        assert _counterpart_is_walkable(leg.map_key, leg.target, side, leg.next_map), leg
+
+
+def test_new_bark_west_target_has_a_walkable_route_29_counterpart():
+    # Regression test for the "parked on the edge" bug: New Bark Town's west border tiles at
+    # y in {12, 13} are locally walkable but their Route 29 counterparts are trees -- pressing
+    # left there does nothing, forever. The old plain local median picked exactly (0, 12). The
+    # resolved target must be one of the border tiles whose counterpart IS walkable (the property,
+    # not a magic number -- live-verified for (0, 9) by
+    # tests/llm/test_tools_execute.py::test_navigate_to_border_tile_crosses_into_next_map).
+    leg = legs.LegTracker().current(24, 4)
+    assert leg.next_map == (24, 3)  # Route 29, now explicit on the Leg
+    assert _counterpart_is_walkable((24, 4), leg.target, "west", (24, 3)), leg.target
+    # And specifically NOT one of the live-verified dead-end tiles.
+    assert leg.target not in {(0, 12), (0, 13)}
+
+
+def test_new_bark_dead_end_border_tiles_fail_the_counterpart_check():
+    # Documents the bug's mechanism with the committed data: (0, 12)/(0, 13) are in
+    # border_exits(new_bark, "west") (locally walkable) yet their Route 29 counterparts are not
+    # walkable -- exactly the tiles the fix must exclude.
+    g = _load_grid((24, 4))
+    exits = legs.border_exits(g, "west")
+    for dead_end in [(0, 12), (0, 13)]:
+        assert dead_end in exits
+        assert not _counterpart_is_walkable((24, 4), dead_end, "west", (24, 3))
+
+
+def test_median_border_exit_falls_back_to_plain_median_without_a_neighbor_grid():
+    # When next_map has no committed collision grid (the (26, 11) gatehouse interior case) there
+    # is nothing to verify the counterpart against, so the resolver keeps the pre-fix behavior:
+    # the plain median of the locally-walkable border tiles.
+    grid = _synthetic_grid()
+    target = legs._median_border_exit(grid, "north", (0, 0), (99, 99), grids={})
+    assert target == (2, 0)  # median of [(1, 0), (2, 0)]
 
 
 def test_route_31_border_west_is_empty_which_is_why_it_needs_an_override():

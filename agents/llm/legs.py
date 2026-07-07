@@ -14,7 +14,17 @@ touches RAM directly, so that's the caller's responsibility.
 Leg targets are derived from the committed collision grids (assets/collision/*.json), not
 hand-typed:
   - 4 legs are plain border exits: the median walkable tile on the map's named edge (west/east/
-    north/south), computed by `border_exits()` below.
+    north/south), computed by `border_exits()` below -- BUT restricted to border tiles whose
+    COUNTERPART tile on the neighboring map is also walkable (see `_median_border_exit()` below).
+    A GSC border crossing only succeeds if the arrival tile on the neighboring map is walkable
+    too; a border tile that is locally walkable but backs onto a tree on the other side is a dead
+    end (confirmed live: New Bark Town's west border has 4 grid-walkable tiles at y in
+    {8, 9, 12, 13}, but Route 29's matching column is only walkable at y in {8, 9} -- rows 12/13
+    back onto trees. The old plain-median pick, (0, 12), left the agent pressing "left" against a
+    tree forever; tests/llm/test_tools_execute.py::test_navigate_to_border_tile_crosses_into_next_map
+    already proves (0, 9) is a real, walkable crossing). Each of these 4 legs now carries an
+    explicit `next_map` key (see `Leg.next_map` and `_CORRIDOR` below) so the counterpart check has
+    something to look up.
   - 3 legs are documented overrides for targets that are NOT plain border exits: the Route 31 ->
     Violet City gatehouse door, the Violet City gym door, and Falkner's tile inside the gym (see
     _ROUTE_31_GATE_DOOR, _GYM_DOOR and `_top_center_walkable()` below). The plan that seeded this
@@ -22,7 +32,10 @@ hand-typed:
     plain border exit like the other 4), but border_exits() on the committed route_31.json grid
     returns an empty list for "west" -- the border there is a solid gatehouse wall except for its
     2-tile door, confirmed against pret's disassembly (see _ROUTE_31_GATE_DOOR below). Grid data
-    wins over the plan's assumption; this discrepancy is what the override documents.
+    wins over the plan's assumption; this discrepancy is what the override documents. These 3
+    overrides are warp/door tiles, not border-adjacency crossings, so the counterpart check does
+    not apply to them the way it does to the 4 plain border exits above -- see the comments at
+    each override's `Leg(...)` construction in `_build_legs()`.
 
 Scope note: the plan's corridor order also names a (26, 11) Violet Gatehouse leg, but no collision
 grid is committed for it -- `extract_collision.py`'s MAPS list only covers the 7 maps below (the
@@ -36,6 +49,12 @@ import glob
 import json
 import os
 from dataclasses import dataclass
+
+# Read-only import, intended: MAP_INFO carries the exact pokecrystal-derived global tile offsets
+# (e.g. New Bark Town (150, 90), Route 29 (90, 90) -- both in TILES) that let us translate a border
+# tile on one map into its arrival tile on the neighboring map. See map_layout.py's derivation
+# block; agents/rl/ itself is not modified.
+from agents.rl.map_layout import MAP_INFO
 
 COLLISION_DIR = "assets/collision"
 
@@ -61,13 +80,60 @@ def border_exits(grid: dict, side: str) -> list[tuple[int, int]]:
     return [(x, y) for x in range(width) if walkable[y][x]]
 
 
-def _median_border_target(grid: dict, side: str) -> tuple[int, int]:
-    """The middle walkable tile (by position along the border) on `grid`'s `side` -- a single,
-    reproducible target picked from the grid itself rather than hand-typed."""
+# side -> one-tile-outward step in TRUE (x, y) axes: the tile the player lands on when GSC
+# triggers the border connection (one press PAST the edge).
+_OUTWARD_STEP = {"west": (-1, 0), "east": (1, 0), "north": (0, -1), "south": (0, 1)}
+
+
+def counterpart_walkable(map_key: tuple[int, int], tile: tuple[int, int], side: str,
+                         next_map: tuple[int, int], neighbor_grid: dict) -> bool:
+    """Whether stepping one tile outward from `tile` (a border tile of `map_key`, TRUE axes) on
+    `side` lands on a walkable tile of `next_map`'s grid. Counterpart math uses the exact
+    pokecrystal-derived global tile offsets in agents/rl/map_layout.MAP_INFO (both offsets are in
+    TILES on one shared global grid):
+
+        global   = MAP_INFO[map_key].offset + tile
+        arrival  = global stepped one tile outward   (e.g. west: global_x - 1)
+        neighbor = arrival - MAP_INFO[next_map].offset
+
+    then look up `neighbor_grid`'s walkable[y][x] at that local tile (False if out of bounds)."""
+    off = MAP_INFO[map_key].offset
+    noff = MAP_INFO[next_map].offset
+    dx, dy = _OUTWARD_STEP[side]
+    gx, gy = off[0] + tile[0] + dx, off[1] + tile[1] + dy
+    nx, ny = gx - noff[0], gy - noff[1]
+    if not (0 <= nx < neighbor_grid["width"] and 0 <= ny < neighbor_grid["height"]):
+        return False
+    return bool(neighbor_grid["walkable"][ny][nx])
+
+
+def _median_border_exit(grid: dict, side: str, map_key: tuple[int, int],
+                        next_map: tuple[int, int], grids: dict) -> tuple[int, int]:
+    """The middle CROSSABLE tile (by position along the border) on `grid`'s `side` -- a single,
+    reproducible target picked from the grid data itself rather than hand-typed.
+
+    "Crossable" = walkable on this map AND with a walkable counterpart tile on `next_map` (see
+    `counterpart_walkable()` and the module docstring: a locally-walkable border tile whose arrival
+    tile is a tree never triggers the connection -- the New Bark (0, 12)/(0, 13) dead-end bug; the
+    old plain local median picked exactly (0, 12)).
+
+    Fallback: if `next_map` has no committed collision grid (e.g. the (26, 11) gatehouse interior
+    -- see the module docstring's scope note), there is nothing to verify the counterpart against,
+    so keep the pre-fix behavior: the plain median of the locally-walkable border tiles."""
     exits = sorted(border_exits(grid, side))
     if not exits:
         raise ValueError(f"grid ({grid['bank']}, {grid['num']}) has no walkable tile on side {side!r}")
-    return exits[len(exits) // 2]
+    neighbor_grid = grids.get(next_map)
+    if neighbor_grid is None:
+        return exits[len(exits) // 2]
+    crossable = [t for t in exits
+                 if counterpart_walkable(map_key, t, side, next_map, neighbor_grid)]
+    if not crossable:
+        raise ValueError(
+            f"grid ({grid['bank']}, {grid['num']}) side {side!r}: none of its walkable border "
+            f"tiles {exits} has a walkable counterpart on neighbor map {next_map}"
+        )
+    return crossable[len(crossable) // 2]
 
 
 def _top_center_walkable(grid: dict) -> tuple[int, int]:
@@ -127,14 +193,16 @@ _GATEHOUSE_INTERIOR_NOTE = (
     "You are inside the Route 31 gatehouse: walk WEST (a few tiles) to exit into Violet City."
 )
 
-# (map_key, display name, border side, per-turn hint) for the 4 plain border-exit legs, in
-# corridor order (New Bark -> ... -> Route 30, the last map with a genuine walkable border
-# crossing -- Route 31's crossing is the gatehouse-door override above).
+# (map_key, display name, border side, destination map key, per-turn hint) for the 4 plain
+# border-exit legs, in corridor order (New Bark -> ... -> Route 30, the last map with a genuine
+# walkable border crossing -- Route 31's crossing is the gatehouse-door override above). The
+# destination map key makes each leg's neighbor explicit so `_median_border_exit()` can verify the
+# counterpart tile's walkability on the far side.
 _CORRIDOR = [
-    ((24, 4), "New Bark Town", "west", "cross into Route 29"),
-    ((24, 3), "Route 29", "west", "cross into Cherrygrove City"),
-    ((26, 3), "Cherrygrove City", "north", "cross into Route 30"),
-    ((26, 1), "Route 30", "north", "cross into Route 31"),
+    ((24, 4), "New Bark Town", "west", (24, 3), "cross into Route 29"),
+    ((24, 3), "Route 29", "west", (26, 3), "cross into Cherrygrove City"),
+    ((26, 3), "Cherrygrove City", "north", (26, 1), "cross into Route 30"),
+    ((26, 1), "Route 30", "north", (26, 2), "cross into Route 31"),
 ]
 
 
@@ -144,6 +212,10 @@ class Leg:
     name: str
     target: tuple[int, int]
     hint: str
+    # The map key this leg's target leads into: the border-crossing neighbor for the 4 plain
+    # border-exit legs, the warp destination for the door overrides, None for the final
+    # (Falkner) leg, whose target is inside its own map.
+    next_map: tuple[int, int] | None = None
 
 
 def _load_grids(collision_dir: str = COLLISION_DIR) -> dict:
@@ -159,12 +231,20 @@ def _load_grids(collision_dir: str = COLLISION_DIR) -> dict:
 def _build_legs() -> list[Leg]:
     grids = _load_grids()
     legs = [
-        Leg(map_key, name, _median_border_target(grids[map_key], side), hint)
-        for map_key, name, side, hint in _CORRIDOR
+        Leg(map_key, name, _median_border_exit(grids[map_key], side, map_key, next_map, grids),
+            hint, next_map=next_map)
+        for map_key, name, side, next_map, hint in _CORRIDOR
     ]
+    # The 3 overrides below are warp/door tiles from pret's warp_event data, not border-adjacency
+    # crossings, so the counterpart-walkability check does not apply: a warp teleports the player
+    # to the destination warp's own tile (guaranteed standable by the game data), it never steps
+    # one tile outward onto adjacent terrain. Route 31's next_map, the (26, 11) gatehouse, also
+    # has no committed collision grid to check against (module docstring's scope note).
     legs.append(Leg((26, 2), "Route 31", _ROUTE_31_GATE_DOOR,
-                     "enter the gatehouse toward Violet City"))
-    legs.append(Leg((10, 5), "Violet City", _GYM_DOOR, "enter Falkner's Gym through the gym door"))
+                     "enter the gatehouse toward Violet City",
+                     next_map=_GATEHOUSE_INTERIOR_MAP_KEY))
+    legs.append(Leg((10, 5), "Violet City", _GYM_DOOR, "enter Falkner's Gym through the gym door",
+                     next_map=(10, 7)))
     legs.append(Leg((10, 7), "Falkner's Gym",
                      _top_center_walkable(grids[(10, 7)]),
                      "challenge Falkner for the Zephyr Badge"))
