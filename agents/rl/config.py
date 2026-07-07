@@ -7,7 +7,41 @@
 # The full historical mapping (PPO_N / PPO_CNN_N* → Agent NNN) lives at the top of
 # training_log.md. The currently-live run still uses its legacy name (it was launched
 # before the rename); the NEXT run is agent_046.
-RUN_NAME = "agent_089"    # CORRIDOR FINAL ATTEMPT — RL-2 (RL-1 + R2), per
+RUN_NAME = "agent_090"    # CORRIDOR FINAL ATTEMPT — RL-3 (R3 + R1 + softened R2 + R4), per
+                          # docs/superpowers/specs/2026-07-06-final-attempt-findings.md §2-R3/§4 and
+                          # docs/superpowers/plans/2026-07-07-rl3-visited-obs.md. RL-3 HYPOTHESIS: the
+                          # PPO_CNN_10e ablation (see this file's historical 10e-era comments / findings
+                          # §2) concluded the visited-coordinates observation was NOT the paper's
+                          # (arXiv:2502.19920 §II-C) indispensable input — but that signal was drawn
+                          # TRANSPOSED at the time (env/ram_reader.py's local_x/local_y hold wYCoord/
+                          # wXCoord swapped vs TRUE x/y; see memory note "RAM reader x/y swapped"), so
+                          # the crop's rows/cols didn't track the player's real movement axes. 10e's
+                          # verdict was a BUG ARTIFACT, not evidence the signal itself hurts. `VISITED_OBS
+                          # =True` re-adds it as a proper, DE-TRANSPOSED "visited" Dict-obs key (gated
+                          # env feature landed commit 9ea5e9e, Task 1; regression-tested against a
+                          # transposed reimplementation) — a genuinely NEW input vs every prior corridor
+                          # run, hence COLD (obs-space change invalidates any warm checkpoint).
+                          # R2 SOFTENING (agent_089 post-mortem, training_log.md "Agent 089 — RL-2
+                          # verdict"): RL-2's kill criterion fired AND REGRESSED (`nav/reach_route31`
+                          # still 0.0 at 29.3M, `nav/ep_max_waypoint` COLLAPSED 2.0→0.0 — agent_088 had
+                          # already consolidated that far). Post-mortem hypotheses: (a) the 16,384-step
+                          # base budget truncated start episodes before they could RE-EARN the
+                          # consolidated wp-0→2 behavior (catastrophic-forgetting pressure instead of
+                          # frontier focus); (b) halving pure-start envs (6/12 to staged saves +
+                          # frontier absorption) cut the nav gradient share too far. This run softens
+                          # BOTH per the post-mortem's own prescription: `DYN_BUDGET_BASE=32768` (2×,
+                          # via the Task-1 override param — gentler truncation) and `CURRICULUM_STATES_CNN`
+                          # restored to a pure-start MAJORITY (9/12 egg_delivered_clean, 1 each of
+                          # crossing/route31/violet_city — down from 089's 6/12) so staged-save gradient
+                          # is a supplement, not a co-equal split. R1/R4 UNCHANGED (CONFINE_TO_CORRIDOR
+                          # =True, EXPLORATION_SCALE=4.0, FRONTIER_ENABLED=True, waypoint-scored).
+                          # COLD (INIT_FROM_CHECKPOINT=None — visited_obs changes the obs space, no
+                          # compatible checkpoint exists), 100M budget (more headroom than RL-1/2's 60M
+                          # since this is a from-scratch structural change, not a warm continuation).
+                          # KILL CRITERION (per Global Constraints / findings schedule): `nav/
+                          # reach_cherrygrove < 0.5` at 30M → stop (a COLD run must at minimum re-clear
+                          # the basic nav bar the two warm attempts took for granted).
+# (prior 089) CORRIDOR FINAL ATTEMPT — RL-2 (RL-1 + R2), per
                           # docs/superpowers/specs/2026-07-06-final-attempt-findings.md §4 and
                           # docs/superpowers/plans/2026-07-06-rl2-staged-budget.md. RL-1 verdict
                           # (training_log.md "Agent 088 — RL-1 verdict"): R1 (CONFINE_TO_CORRIDOR) + R4
@@ -245,21 +279,23 @@ N_ENVS_CNN = 12               # PyBoy CPU-bound (16 cores) — 12 envs improves 
 # approach is exhausted. 058 relies on the start policy's OWN exploration (entropy schedule) + the
 # directional reset's southward income, warm from 053's pickup-100% base. No segregation possible.
 CURRICULUM_STATES_CNN = [
-    # agent_089: R2(a) staged resets (findings §2/§4) — re-weighted to add direct gradient AT the
-    # segment where RL-1 plateaued (Route 30 gate → Route 31 → Violet), on top of the true start
-    # distribution. Split (N_ENVS_CNN=12): majority (6) stays on egg_delivered_clean.state (the nav/
-    # success-gate distribution, unchanged from 088); the remaining 6 are split evenly (2 each) across
-    # 3 on-corridor intermediate saves PAST the wp-2 plateau — all egg-delivered/same story flags, so
-    # this is NOT the foreign-state curriculum segregation that ruled out 047-051. egg_delivered_clean
-    # is kept LAST (as in 088) so FRONTIER_N_ENVS's dedicated last-4 ranks land inside it — same
-    # archive-Go-Explore mechanics as 088, untouched by the new staged slots (ranks 0-7, all p=0).
-    # Counts must sum to N_ENVS_CNN (12). is_start_env (env/pokemon_env_cnn.py) only matches
-    # start.state/egg_delivered_clean.state, so these 3 new slots log under front/ (not nav/) by
-    # design — nav/ stays the clean, uncontaminated success gate exactly like 088.
-    ("saves/crossing.state",            2),   # Route 29→Cherrygrove crossing — just past the old wp-2 plateau
-    ("saves/route31.state",             2),   # Route 31 (post-gate) — direct practice AT the lagging segment
-    ("saves/violet_city.state",         2),   # Violet end — explore south, harvest Route31/gym-approach cells
-    ("saves/egg_delivered_clean.state", 6),   # true start (nav/ success gate); last 4 are the frontier envs
+    # agent_090: R2 SOFTENED (agent_089 post-mortem, training_log.md "Agent 089 — RL-2 verdict") —
+    # 089's 6/12 pure-start split cut the nav gradient share too far AND its episodes never re-earned
+    # the consolidated wp-0→2 behavior before truncating (`nav/ep_max_waypoint` collapsed 2.0→0.0).
+    # Restored to a PURE-START MAJORITY (9/12 egg_delivered_clean.state, the nav/ success-gate
+    # distribution) with only 1 env each on the 3 on-corridor staged saves (down from 089's 2 each) —
+    # supplementary gradient at the lagging segment, no longer co-equal with the true start
+    # distribution. All 3 staged saves are still egg-delivered/same story flags (not the foreign-state
+    # curriculum segregation that ruled out 047-051). egg_delivered_clean is kept LAST so
+    # FRONTIER_N_ENVS's dedicated last-4 ranks (8-11) land inside it — same archive-Go-Explore
+    # mechanics as 088/089. Counts must sum to N_ENVS_CNN (12). is_start_env (env/pokemon_env_cnn.py)
+    # only matches start.state/egg_delivered_clean.state, so the 3 staged slots log under front/ (not
+    # nav/) by design — nav/ stays the clean, uncontaminated success gate.
+    ("saves/crossing.state",            1),   # Route 29→Cherrygrove crossing — just past the old wp-2 plateau
+    ("saves/route31.state",             1),   # Route 31 (post-gate) — direct practice AT the lagging segment
+    ("saves/violet_city.state",         1),   # Violet end — explore south, harvest Route31/gym-approach cells
+    ("saves/egg_delivered_clean.state", 9),   # true start (nav/ success gate); last 4 are the frontier envs
+    # (prior 089) 2×crossing + 2×route31 + 2×violet_city + 6×egg_delivered_clean — REGRESSED (verdict above)
     # (prior 088) 3×violet_city + 2×violet_city_gym + 7×egg_delivered_clean (agent_079/078 bidirectional curriculum)
     # (prior 087/086/085/084/083 GYM TASK, superseded for this run) 12×violet_city_gym / mixed gym+falkner_battle
 ]
@@ -296,24 +332,26 @@ CONFINE_TO_CORRIDOR = True       # agent_088: R1 (final-attempt findings §2/§4
                                  # capped battle win), so progressing across the Route-29→Cherrygrove boundary
                                  # out-earns grinding (Whidden's dense-exploration-primary recipe). Dial back
                                  # later if it over-wanders past the gym. (1.0 = normal Phase-1 exploration.)
-DYNAMIC_EPISODE_BUDGET = True    # agent_089: R2b FLIPPED ON for the actual RL-2 attempt (Task 1 landed the
-                                 # gated env feature at False, commit 2c6ee45). "Earned episode budget"
+DYNAMIC_EPISODE_BUDGET = True    # agent_089: R2b FLIPPED ON, UNCHANGED for agent_090. "Earned episode budget"
                                  # (Pokémon-Red paper trick, arXiv:2502.19920) — start/curriculum episodes
-                                 # begin capped at DYN_BUDGET_BASE (16384 steps) and the cap only grows (up
-                                 # to MAX_STEPS) when the episode reaches a NEW corridor waypoint. Frontier-
-                                 # origin episodes are untouched (keep frontier_max_steps).
-DYN_BUDGET_BASE    = 16384       # RL-3 Task 1: overridable base cap consumed by PokemonEnvCNN's
-                                 # `dyn_budget_base` param (only takes effect when DYNAMIC_EPISODE_BUDGET
-                                 # is True). Default preserved at the env module's own DYN_BUDGET_BASE
-                                 # (16384) — the agent_089 post-mortem's R2-softening (32768) is set per-run
-                                 # in the RUN_NAME header, not here, to keep this default neutral.
-VISITED_OBS        = False       # RL-3 (final-attempt findings §2/§4, technique R3): gated "visited"
-                                 # Dict-obs key (48x48 uint8 crop of episode-visited tiles, de-transposed —
-                                 # see env/pokemon_env_cnn.py's _visited_crop). Re-adds the signal the 10e
+                                 # begin capped at DYN_BUDGET_BASE and the cap only grows (up to MAX_STEPS)
+                                 # when the episode reaches a NEW corridor waypoint. Frontier-origin
+                                 # episodes are untouched (keep frontier_max_steps).
+DYN_BUDGET_BASE    = 32768       # agent_090: R2-SOFTENING (agent_089 post-mortem, training_log.md
+                                 # "Agent 089 — RL-2 verdict") — 089's 16384 base likely truncated start
+                                 # episodes before they could RE-EARN the already-consolidated wp-0→2
+                                 # behavior (`nav/ep_max_waypoint` collapsed 2.0→0.0 by 29.3M). Doubled to
+                                 # 32768 via PokemonEnvCNN's `dyn_budget_base` override param (Task 1,
+                                 # commit 9ea5e9e) — gentler truncation, gives episodes room to re-consolidate
+                                 # before the earned-budget mechanic kicks in. (prior 16384, RL-2/agent_089)
+VISITED_OBS        = True        # agent_090: R3 FLIPPED ON — gated "visited" Dict-obs key (48x48 uint8
+                                 # crop of episode-visited tiles, de-transposed — see
+                                 # env/pokemon_env_cnn.py's _visited_crop). Re-adds the signal the 10e
                                  # ablation removed while it was drawn TRANSPOSED (the ram x/y swap) — 10e's
-                                 # verdict was a bug artifact, not evidence the signal itself hurts. Off by
-                                 # default (cold-start-only change; flipping it invalidates warm starts from
-                                 # any checkpoint trained without it).
+                                 # verdict was a bug artifact, not evidence the signal itself hurts (see
+                                 # RUN_NAME header). COLD-start-only change (obs-space change invalidates
+                                 # any warm checkpoint trained without it — hence INIT_FROM_CHECKPOINT=None
+                                 # below). (prior False, all runs through 089)
 FRONTIER_ENABLED   = True        # agent_088: REVERTED — ON (was False for the bounded 083-087 gym task, which
                                  # has no corridor to explore). agent_079 ran the bidirectional Go-Explore
                                  # frontier (continued from 077/078) — reinstated here, now re-scored by
@@ -377,11 +415,13 @@ ENT_COEF_CNN      = 0.02      # agent_088: REVERTED to the 075-085 schedule-star
 ENT_COEF_CNN_END  = 0.005     # agent_075: commit low after exploring the move
 ENT_ANNEAL_STEPS_CNN = 8_000_000   # agent_075: anneal 0.02→0.005 over the first 8M, then hold 0.005
 
-TOTAL_TIMESTEPS_CNN = 60_000_000    # agent_089: UNCHANGED budget for RL-2. Kill criteria (findings §4 RL-2
-                                    # row, tightened): no new segment (nav/reach_violet==0.0) after 60M →
-                                    # stop; ALSO stop early at 30M if nav/reach_route31 is still 0.0 (staged
-                                    # resets sit ON the lagging segment, so a crack should show sooner than
-                                    # RL-1's 40M gate). Extend toward 200-480M (R5) only if it cracks.
+TOTAL_TIMESTEPS_CNN = 100_000_000   # agent_090: RAISED for RL-3's COLD run (more headroom than RL-1/2's
+                                    # 60M since this is a from-scratch structural obs-space change, not a
+                                    # warm continuation of a prior policy). KILL CRITERION (Global
+                                    # Constraints / findings schedule): `nav/reach_cherrygrove < 0.5` at
+                                    # 30M → stop — a COLD run must at minimum re-clear the basic nav bar
+                                    # the warm RL-1/RL-2 attempts took for granted.
+# (prior 089) 60_000_000 — RL-2's budget (REGRESSED, kill criterion fired at 29.3M — see verdict above).
 # (prior 088) RL-1's gate (findings §4) — NOT a revert to 079's own 480M budget (that's R5, a later
                                     # attempt); 40M kill gate + 20M headroom to confirm a clean read past
                                     # the gate. Extend toward 200-480M (R5) only if nav/reach_route31 cracks.
@@ -422,10 +462,11 @@ CHECKPOINT_FREQ_CNN = 5_000_000     # agent_088: REVERTED to the 077-081 corrido
 # Warm-start for the REVERSE CURRICULUM: each stage fine-tunes from the PREVIOUS stage's *_final.zip.
 # Stage 1 starts from PPO_CNN_5_final (already knows New Bark → Cherrygrove → the gate area).
 # UPDATE this line between stages (see the table above). Set to None for a cold start.
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_088/agent_088_39999936_steps.zip"   # agent_089: WARM from
-                              # 088@40M (its kill point — RL-1 verdict: Cherrygrove + Route-30-gate
-                              # consolidated, wp 0→2, plateaued there) for RL-2. The staged resets +
-                              # dynamic episode budget are the new variables added on top of this exact base.
+INIT_FROM_CHECKPOINT = None      # agent_090: COLD — RL-3's `VISITED_OBS=True` changes the observation
+                              # space (new "visited" Dict-obs key), so no prior checkpoint is compatible
+                              # (SB3's MultiInputPolicy would mismatch the obs dict). This is the point of
+                              # RL-3: a genuinely new input requires a from-scratch policy to use it.
+# (prior 089) "runs/checkpoints/agent_088/agent_088_39999936_steps.zip"   # WARM from 088@40M for RL-2 (REGRESSED).
 # (prior 088) "runs/checkpoints/agent_079/agent_079_129999792_steps.zip"   # WARM from 079@130M
                               # (Route-30-capable — same checkpoint 080/082 warmed from) for RL-1.
                               # CONFINE_TO_CORRIDOR is the new variable added on top of this exact base.

@@ -2507,3 +2507,60 @@ and env split need to be gentler (e.g. base 32k, +16k/waypoint; 8-9 pure-start s
 Next per the findings schedule: RL-3 (visited-coords observation, de-transposed, COLD run, full
 stack) — the paper's "indispensable" input the 10e ablation removed while it was drawn transposed.
 Best corridor checkpoint remains agent_088@40M (wp 2 consolidated).
+
+---
+
+## Agent 090 — CORRIDOR FINAL ATTEMPT RL-3 (R3 + R1 + softened R2 + R4) — LAUNCH PENDING (2026-07-07)
+
+**Hypothesis (findings §2-R3/§4, docs/superpowers/plans/2026-07-07-rl3-visited-obs.md):** the
+PPO_CNN_10e ablation concluded the visited-coordinates observation was NOT the paper's
+(arXiv:2502.19920 §II-C) indispensable input — but that signal was drawn TRANSPOSED at the time
+(`env/ram_reader.py`'s `local_x`/`local_y` hold `wYCoord`/`wXCoord` swapped vs TRUE x/y; memory note
+"RAM reader x/y swapped"), so the crop's rows/columns never tracked the player's real movement axes.
+10e's verdict was a BUG ARTIFACT, not evidence the signal itself hurts. **R3** re-adds it as a
+proper, DE-TRANSPOSED `"visited"` Dict-obs key (48×48 uint8 crop of this episode's visited tiles on
+the current map, player centered, TRUE axes — gated env feature landed commit 9ea5e9e, Task 1;
+regression-tested: a monkeypatched true-east walk must move marks along crop COLUMNS, verified to
+fail on a transposed reimplementation before landing). This is a genuinely NEW input vs every prior
+corridor run → the obs space changes → **COLD** (`INIT_FROM_CHECKPOINT=None`; no compatible
+checkpoint exists).
+
+**R2 SOFTENING (agent_089 post-mortem, above):** RL-2's kill criterion fired AND REGRESSED
+(`nav/reach_route31` still 0.0 at 29.3M, `nav/ep_max_waypoint` COLLAPSED 2.0→0.0). The post-mortem's
+own prescription is applied verbatim: `DYN_BUDGET_BASE` 16,384→**32,768** (via the Task-1 override
+param, gentler truncation so episodes have room to re-earn consolidated behavior before the budget
+mechanic caps them) and `CURRICULUM_STATES_CNN` restored to a **pure-start majority** — 9/12
+`egg_delivered_clean.state` (was 6/12), 1 env each (was 2 each) on the three on-corridor staged
+saves (`crossing`/`route31`/`violet_city`) — supplementary gradient at the lagging segment, no
+longer co-equal with the true start distribution. R1/R4 UNCHANGED (`CONFINE_TO_CORRIDOR=True`,
+`EXPLORATION_SCALE=4.0`, `FRONTIER_ENABLED=True`, waypoint-scored, 4/12 frontier envs).
+
+**Config deltas vs 089** (everything else identical — lr 7e-5, ent 0.02→0.005@8M, checkpoint every 5M):
+
+| Field | 089 (RL-2) | 090 (RL-3) |
+|---|---|---|
+| `RUN_NAME` | agent_089 | **agent_090** |
+| `VISITED_OBS` | False | **True** (R3) |
+| `INIT_FROM_CHECKPOINT` | `agent_088_39999936` | **`None`** (COLD — obs-space change) |
+| `DYN_BUDGET_BASE` | 16384 | **32768** (R2 softening) |
+| `CURRICULUM_STATES_CNN` | 2×crossing + 2×route31 + 2×violet_city + 6×egg_delivered_clean | **1×crossing + 1×route31 + 1×violet_city + 9×egg_delivered_clean** (R2 softening) |
+| `TOTAL_TIMESTEPS_CNN` | 60M | **100M** (COLD run gets more headroom than a warm continuation) |
+
+**Kill criterion:** `nav/reach_cherrygrove < 0.5` at 30M → stop (a COLD run must at minimum re-clear
+the basic nav bar the two warm attempts, 088/089, took for granted).
+
+**Smoke test (2026-07-07, ~15s background boot bounded by `timeout 200`, GPU shared with the live
+Ollama eval — smoke only, NO launch):** CUDA detected (RTX 5080, 16.6 GB), frontier archive enabled
+at `runs/frontier_archive/agent_090` (4/12 frontier envs), `[init] Training from scratch (no
+warm-start checkpoint set)` confirms COLD boot, `learning_rate` overridden to `7e-05`, TensorBoard
+dir `runs/agent_090_1` created, 12 SubprocVecEnv workers up (forkserver), 2 rollouts logged cleanly
+(fps ~1300-1500 with Ollama co-resident on the GPU; `front/reach_violet` already 0.8-1.0 from the
+staged saves + frontier, `nav/*` correctly 0 on a brand-new cold policy's first rollout), 72
+frontier cells harvested, no traceback. Killed cleanly via SIGTERM to the exact smoke PID (76515);
+`pgrep -f agents.rl.train_cnn` confirmed empty afterward, GPU freed (only the Ollama eval process
+remains). Tests: `test_visited_obs.py`, `test_confinement.py`, `test_dynamic_budget.py`,
+`test_frontier_score.py` — 11 passed.
+
+**LAUNCH PENDING** (controller launches when the GPU frees up after the LLM runs).
+Launch command (controller's step, verbatim from 088/089's protocol):
+`nohup .venv/bin/python -m agents.rl.train_cnn > runs/agent_090_launch.log 2>&1 &`
