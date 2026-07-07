@@ -31,7 +31,10 @@ class LLMConfig:
     api_key: str = "ollama"
     rom_path: str = "pokemon_rom.gbc"
     state_path: str = "saves/egg_delivered_clean.state"  # corridor task (final attempt); the gym slice used saves/violet_city_gym.state
-    max_steps: int = 500
+    max_steps: int = 1000  # LLM-3 run 2: 500 was sized for a stall-bound agent; run 1 (trace
+                           # run_1783429465) was still making corridor progress (wp 2, Route 30)
+                           # when it hit the cap, so the budget now measures capability, not
+                           # patience. Change documented in training_log.md's LLM-3 entry.
     token_budget: int = 4_000_000
     temperature: float = 0.3
     request_timeout: int = 120
