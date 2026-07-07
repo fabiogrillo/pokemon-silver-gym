@@ -2492,3 +2492,18 @@ map (24,4) only, wp 0.
 strategic targets with it — local perseveration replaces exploration. Exactly the failure mode the
 findings predicted; proceed to LLM-3: the HARNESS owns the leg goals (macro-waypoint checklist,
 prompt carries only the current leg's target coordinate for navigate_to).
+
+### Agent 089 — RL-2 verdict (2026-07-07, stopped at 29.3M/60M per the 30M early gate)
+
+Kill criterion fired AND the attempt REGRESSED: `nav/reach_route31` still 0.0 at 29.3M and
+`nav/ep_max_waypoint` COLLAPSED 2.0 → 0.0 (agent_088 had consolidated Cherrygrove + the gate; 089
+lost both). Post-mortem hypotheses (for RL-3+ design): (a) the 16,384-step base budget truncates
+start episodes before they re-earn the consolidated behavior — the budget is earned per NEW waypoint,
+so a policy that needs a warm-up stretch gets starved (catastrophic-forgetting pressure instead of
+frontier focus); (b) halving pure-start envs (6 of 12 slots to staged saves + frontier absorption)
+cut the nav gradient share. The frontier side stayed healthy (front/ep_max_waypoint 4.0). Lesson:
+R2's two structural tricks fought R1's consolidation instead of compounding it — the budget quantum
+and env split need to be gentler (e.g. base 32k, +16k/waypoint; 8-9 pure-start slots) if retried.
+Next per the findings schedule: RL-3 (visited-coords observation, de-transposed, COLD run, full
+stack) — the paper's "indispensable" input the 10e ablation removed while it was drawn transposed.
+Best corridor checkpoint remains agent_088@40M (wp 2 consolidated).
