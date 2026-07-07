@@ -40,7 +40,8 @@ class PokemonEnvCNN(gym.Env):
                  frontier_root=None, p_frontier=0.0, frontier_max_cells=4000,
                  frontier_cell_k=4, frontier_epsilon=0.1, frontier_max_steps=MAX_STEPS,
                  egg_marker=False, exploration_scale=1.0, confine_to_gym=False,
-                 confine_to_corridor=False, dynamic_episode_budget=False):
+                 confine_to_corridor=False, dynamic_episode_budget=False,
+                 visited_obs=False, dyn_budget_base=DYN_BUDGET_BASE):
         """PyBoy-backed Gymnasium env with Dict obs (RGB image + state vector) for CnnPolicy.
 
         Go-Explore frontier reset (agent_059): if `frontier_root` is set, a fraction `p_frontier` of
@@ -64,11 +65,16 @@ class PokemonEnvCNN(gym.Env):
         # Dict obs: RGB screen (→ CNN) + RAM-derived state vector (HP/level/battle/story flags), so
         # the policy can condition on state pixels don't show (e.g. the Route 30 fork looks IDENTICAL
         # pre/post egg delivery). PPO_CNN_10e ABLATION: the visited-mask 4th channel was REMOVED — it
-        # was semantic noise on battle/menu screens and blocked the corridor (10d gate fail). To
-        # re-enable: stack self._visited_mask(ram_state) in _get_obs and set image shape (72,80,4).
+        # was semantic noise on battle/menu screens and blocked the corridor (10d gate fail). RL-3
+        # (final-attempt findings §2/§4, technique R3) re-adds it as a SEPARATE Dict-obs key instead
+        # of a stacked image channel (arXiv:2502.19920 §II-C: keeps battle/menu screens from corrupting
+        # it) — gated by `visited_obs` (default OFF), so the obs space is BIT-IDENTICAL to today unless
+        # explicitly enabled (old checkpoints keep loading). See `_visited_crop`.
         self.observation_space = gym.spaces.Dict({
             "image":  gym.spaces.Box(low=0, high=255, shape=(72, 80, 3), dtype=np.uint8),
             "vector": gym.spaces.Box(low=0.0, high=1.0, shape=(11,), dtype=np.float32),
+            **({"visited": gym.spaces.Box(low=0, high=1, shape=(48, 48), dtype=np.uint8)}
+               if visited_obs else {}),
         })
 
         self.prev_state = {}
@@ -123,9 +129,14 @@ class PokemonEnvCNN(gym.Env):
                                               # relying on reward tweaks). Off by default.
         self.dynamic_episode_budget = dynamic_episode_budget  # R2b (Pokémon-Red paper trick): earned
                                               # episode budget — start/curriculum episodes begin capped at
-                                              # DYN_BUDGET_BASE and grow the cap only when the episode's
+                                              # dyn_budget_base and grow the cap only when the episode's
                                               # max waypoint ordinal increases. Frontier-origin episodes are
                                               # untouched (they keep frontier_max_steps). Off by default.
+        self.dyn_budget_base = dyn_budget_base  # overridable base cap for dynamic_episode_budget (R2b);
+                                              # defaults to the module-level DYN_BUDGET_BASE (16384).
+        self.visited_obs = visited_obs  # R3 (final-attempt findings §2/§4): gate for the "visited" Dict-obs
+                                              # key (see _visited_crop). Off by default — obs space stays
+                                              # BIT-IDENTICAL to today unless explicitly enabled.
 
     def _state_vector(self, ram):
         """RAM-derived self-state vector, all in [0,1]. Enemy fields are zeroed OUTSIDE battle because
@@ -159,6 +170,33 @@ class PokemonEnvCNN(gym.Env):
                     mask[row * 8:(row + 1) * 8, col * 8:(col + 1) * 8] = 255
         return mask
 
+    def _visited_crop(self, ram):
+        """48x48 uint8 crop: 1 on tiles of the CURRENT map already visited THIS EPISODE, in TRUE
+        (de-transposed) axes, player at center (24,24). Gated by `visited_obs` (R3, final-attempt
+        findings §2/§4) — re-adds the 10e-ablated visited signal as a SEPARATE Dict-obs key.
+
+        env/ram_reader.py's local_x/local_y fields are swapped vs their names (local_x holds
+        wYCoord, local_y holds wXCoord — frozen there, trained checkpoints depend on those RAM
+        offsets/semantics). This is THE bug the 10e ablation shipped with (drawn transposed). Every
+        geometry consumer must un-swap at its own boundary; canonical reference:
+        agents/rl/map_layout.ram_to_image_px. Un-swap here too: true_x = ram['local_y'],
+        true_y = ram['local_x'] — so walking true-EAST moves the mark along crop COLUMNS, never rows.
+        `self.visited_tiles` entries are stored as (bank, num, ram_local_x, ram_local_y), i.e.
+        (bank, num, true_y, true_x) — un-swap when reading them back out too.
+        """
+        crop = np.zeros((48, 48), dtype=np.uint8)
+        bank, num = ram["map_bank"], ram["map_number"]
+        true_x, true_y = ram["local_y"], ram["local_x"]  # un-swap (see docstring)
+        for (t_bank, t_num, t_ram_x, t_ram_y) in self.visited_tiles:
+            if t_bank != bank or t_num != num:            # same-map filter
+                continue
+            t_true_x, t_true_y = t_ram_y, t_ram_x          # un-swap the stored tuple too
+            row = 24 + (t_true_y - true_y)
+            col = 24 + (t_true_x - true_x)
+            if 0 <= row < 48 and 0 <= col < 48:
+                crop[row, col] = 1
+        return crop
+
     # agent_063: egg-state visual marker. 8x8 px corner patch stamped into the IMAGE encoding the egg
     # quest state, so the CNN (which dominates the policy) can SEE pre-pickup vs carrying vs delivered.
     # Root cause of the 059-062 transfer⟺erosion wall: at Cherrygrove the screen looks IDENTICAL whether
@@ -181,7 +219,10 @@ class PokemonEnvCNN(gym.Env):
             else:
                 state = "none"
             image[0:8, 0:8] = self._EGG_MARKER[state]   # stamp the egg-state patch (top-left corner)
-        return {"image": image, "vector": self._state_vector(ram_state)}
+        obs = {"image": image, "vector": self._state_vector(ram_state)}
+        if self.visited_obs:
+            obs["visited"] = self._visited_crop(ram_state)
+        return obs
     
     def step(self, action):
         screen = self.pyboy.step(action, n=16) # Advance the emulator by 16 frames (1/4 second at 60 FPS)
@@ -223,7 +264,7 @@ class PokemonEnvCNN(gym.Env):
             # (shorter) frontier_max_steps cap untouched — this only applies to start/curriculum episodes.
             if (self.dynamic_episode_budget and not self._from_frontier
                     and new_max_waypoint > self.max_waypoint):
-                self._max_steps = min(MAX_STEPS, DYN_BUDGET_BASE * (1 + new_max_waypoint))
+                self._max_steps = min(MAX_STEPS, self.dyn_budget_base * (1 + new_max_waypoint))
             self.max_waypoint = new_max_waypoint
 
         # Track the southward return front while carrying the undelivered egg (telemetry only)
@@ -353,7 +394,7 @@ class PokemonEnvCNN(gym.Env):
         if self._from_frontier:
             self._max_steps = self.frontier_max_steps
         elif self.dynamic_episode_budget:
-            self._max_steps = DYN_BUDGET_BASE
+            self._max_steps = self.dyn_budget_base
         else:
             self._max_steps = MAX_STEPS
 

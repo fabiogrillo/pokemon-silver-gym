@@ -302,6 +302,18 @@ DYNAMIC_EPISODE_BUDGET = True    # agent_089: R2b FLIPPED ON for the actual RL-2
                                  # begin capped at DYN_BUDGET_BASE (16384 steps) and the cap only grows (up
                                  # to MAX_STEPS) when the episode reaches a NEW corridor waypoint. Frontier-
                                  # origin episodes are untouched (keep frontier_max_steps).
+DYN_BUDGET_BASE    = 16384       # RL-3 Task 1: overridable base cap consumed by PokemonEnvCNN's
+                                 # `dyn_budget_base` param (only takes effect when DYNAMIC_EPISODE_BUDGET
+                                 # is True). Default preserved at the env module's own DYN_BUDGET_BASE
+                                 # (16384) — the agent_089 post-mortem's R2-softening (32768) is set per-run
+                                 # in the RUN_NAME header, not here, to keep this default neutral.
+VISITED_OBS        = False       # RL-3 (final-attempt findings §2/§4, technique R3): gated "visited"
+                                 # Dict-obs key (48x48 uint8 crop of episode-visited tiles, de-transposed —
+                                 # see env/pokemon_env_cnn.py's _visited_crop). Re-adds the signal the 10e
+                                 # ablation removed while it was drawn TRANSPOSED (the ram x/y swap) — 10e's
+                                 # verdict was a bug artifact, not evidence the signal itself hurts. Off by
+                                 # default (cold-start-only change; flipping it invalidates warm starts from
+                                 # any checkpoint trained without it).
 FRONTIER_ENABLED   = True        # agent_088: REVERTED — ON (was False for the bounded 083-087 gym task, which
                                  # has no corridor to explore). agent_079 ran the bidirectional Go-Explore
                                  # frontier (continued from 077/078) — reinstated here, now re-scored by

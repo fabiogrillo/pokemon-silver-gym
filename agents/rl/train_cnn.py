@@ -155,6 +155,8 @@ def make_env(rank, state_path, frontier_root=None, p_frontier=0.0):
             confine_to_gym=getattr(config, "CONFINE_TO_GYM", False),  # agent_087: end episode on leaving GYM_MAP
             confine_to_corridor=getattr(config, "CONFINE_TO_CORRIDOR", False),  # R1: end episode off-corridor
             dynamic_episode_budget=getattr(config, "DYNAMIC_EPISODE_BUDGET", False),  # R2b: earned episode budget
+            dyn_budget_base=getattr(config, "DYN_BUDGET_BASE", 16384),  # R2b override (R2-softening, agent_089 post-mortem)
+            visited_obs=getattr(config, "VISITED_OBS", False),  # R3: gated visited-coordinates Dict-obs key
         )
         env.reset(seed=rank)
         return env
