@@ -2468,3 +2468,27 @@ gone, GPU freed (only the Ollama eval process remains).
 **LAUNCH PENDING** (controller launches when the GPU frees up after the LLM-2 runs).
 Launch command (controller's step, verbatim from 088's protocol):
 `nohup .venv/bin/python -m agents.rl.train_cnn > runs/agent_089_launch.log 2>&1 &`
+
+### LLM-2 — navigate_to tool (L1+L2) — 2026-07-07
+
+**Harness fixes required first (all committed):** the June gym confinement was hardcoded in
+`agent.py` (home_map lock + snapshot-undo of map changes + probe exit-filter) and GOAL/SYSTEM_PROMPT
+were still gym-slice text → gated behind `confine_to_home_map` (97a05c8). qwen3-vl's thinking-only
+empty replies (no off-switch exists for the VL line: think:false and /no_think both ignored) spiked
+to 98% on the longer corridor prompt, and the empty-fallback 'a' press self-fed NPC textbook loops
+(402 consecutive presses in run 1) → retry-on-empty + overworld wait fallback + slimmer prompt
+(0048ec1). Caveat recorded: LLM-1's baseline ran WITH the then-hardcoded lock, so its wp=0 partly
+reflects the harness.
+
+**Run 1** (`run_1783362673.jsonl`, pre-0048ec1): 500 steps, wp 0, 11 tiles. navigate_to called ONCE
+(worked: "navigated to (6,6)"); then an NPC dialogue loop ate the episode (402× 'a').
+**Run 2** (`run_1783379968.jsonl`, post-fix, truncated at 263 steps by the controller — verdict
+already unambiguous): empty rate 36% (from 98%), navigate_to 56 calls — real adoption — but **50/56
+target the SAME mid-town coordinate (12,11)** which the tool reports unreachable ("navigated to
+(13,11)"); it never targets the west exit despite the prompt naming map-edge exits. 9 unique tiles,
+map (24,4) only, wp 0.
+
+**Verdict (kill criterion met):** the spatial compass EXECUTES correctly but the model cannot pick
+strategic targets with it — local perseveration replaces exploration. Exactly the failure mode the
+findings predicted; proceed to LLM-3: the HARNESS owns the leg goals (macro-waypoint checklist,
+prompt carries only the current leg's target coordinate for navigate_to).
