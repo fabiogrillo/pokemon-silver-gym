@@ -165,3 +165,42 @@ def test_navigate_to_south_changes_y_not_x(emulator):
     assert after_true == goal
     assert after_true[0] == true_x        # x unchanged
     assert after_true[1] == true_y + 2    # y moved south
+
+
+def test_navigate_to_recovers_from_blocking_npc_dialogue(emulator):
+    # Regression test for the "no path to (0, 7)" x5 (task symptom: x334 in the original live run)
+    # stall on Route 29. Route 29 has a stationary rival NPC ("I've seen you a couple times...")
+    # whose forced-facing dialogue seizes ALL directional input the instant the player enters its
+    # sight line -- not just the one tile it's "standing on". Confirmed directly against the
+    # emulator: from true (10, 7) (the foothold of the only westward ledge hop in this band --
+    # assets/collision/route_29.json ledge (9, 7): ["left"]), pressing left/up/down/right each
+    # fail 3/3 retries with zero position change while battle_type stays 0 throughout -- so the old
+    # executor (which only ever reacted to a single occupied *tile*, see bug 1's NPC-collision fix)
+    # walled off every neighbor of (10, 7) into blocked_tiles one at a time and finished by
+    # reporting a permanent, misleading "no path to (0, 7)" with the player never having moved.
+    #
+    # The fix (_clear_blocking_interaction) presses 'a' to advance the dialogue once a direction
+    # has exhausted its normal retries, mirroring what this codebase's own SYSTEM_PROMPT already
+    # tells the LLM to do by hand ("press 'a' until battle starts or dialogue clears"). Live-proven
+    # outcome here: the dialogue resolves into the rival's battle, which the walk loop's existing
+    # battle early-stop convention already reports correctly.
+    wrapper, reader = emulator
+    execute_tool("navigate_to", {"x": 0, "y": 9}, wrapper, reader, CFG)  # cross into Route 29
+    # Teleport directly onto the NPC's trigger tile via a raw RAM write -- deterministic, unlike
+    # relying on tall-grass RNG to wander into the same spot. TRUE (x, y) = (local_y, local_x).
+    wrapper.pyboy.memory[0xDA02] = 7   # local_x
+    wrapper.pyboy.memory[0xDA03] = 16  # local_y
+    wrapper.pyboy.tick(count=4)
+    before = reader.read_all()
+    assert (before["map_bank"], before["map_number"]) == (24, 3)  # Route 29
+    assert _true_xy(before) == (16, 7)
+
+    obs = execute_tool("navigate_to", {"x": 0, "y": 7}, wrapper, reader, CFG)
+
+    after = reader.read_all()
+    # Old code: {'ok': False, 'note': 'no path to (0, 7)', 'stopped_early': True}, position frozen
+    # at (16, 7) -- the walk loop never got a chance to press a single direction before bailing.
+    assert obs["ok"] is True
+    assert obs["stopped_early"] is True
+    assert _true_xy(after) != (16, 7)          # made real progress before the dialogue interrupted
+    assert after["battle_type"] > 0            # dialogue resolved into the rival's battle

@@ -113,6 +113,52 @@ _STEP_RETRIES = 3
 # reach (see pathfind.border_exit_direction). 3 matches _STEP_RETRIES's slack for the walk-cycle
 # overshoot described above.
 _BORDER_EXIT_RETRIES = 3
+# How many 'a' presses to try, once a direction has exhausted _STEP_RETRIES with zero movement,
+# before concluding the target tile is genuinely blocked by terrain/a stationary obstacle -- see
+# _clear_blocking_interaction's docstring ("bug 4").
+_INTERACTION_CLEAR_RETRIES = 8
+
+
+def _clear_blocking_interaction(wrapper, ram_reader, cfg, start_map, cur_xy):
+    """Press 'a' up to `_INTERACTION_CLEAR_RETRIES` times to clear a scripted NPC dialogue that has
+    seized directional input, then report what happened.
+
+    Route maps have stationary NPCs (e.g. Route 29's rival, "I've seen you a couple times...")
+    that trigger a forced-facing dialogue -- not a battle yet, not a map change -- the instant the
+    player walks within their sight line. While that dialogue box is open, GSC ignores directional
+    input entirely, so a live player standing at the trigger tile can fail to move in literally
+    *every* direction (confirmed directly against the emulator: from Route 29 true (10, 7), the
+    ledge-hop direction 'left' -- and, after marking it blocked, 'up'/'down'/'right' too -- all
+    fail 3/3 retries with zero position change and battle_type staying 0 throughout). The old
+    executor had no notion of this state: it only reacted to a single occupied *tile* (bug 1's
+    NPC-collision fix), so it walled off every neighbor into `blocked_tiles` one at a time and
+    finished by reporting a permanent, misleading "no path"/"path blocked" -- reproducing the
+    "no path to (0, 7)" symptom this task set out to fix. The real fix mirrors what a human player
+    (and this codebase's own SYSTEM_PROMPT, which already tells the LLM "press 'a' until battle
+    starts or dialogue clears") would do: press 'a' to advance the dialogue, which either clears
+    (ordinary NPC greeting) or leads into a battle (confirmed both live: mashing 'a' from the
+    Route 29 trigger above ends in battle_type=1 within a handful of presses).
+
+    Returns one of:
+    - ("battle"|"map_change", new_xy): the dialogue resolved into something the walk loop's own
+      early-stop convention already handles; caller should return that observation immediately.
+    - ("moved", new_xy): a scripted cutscene shuffled the player without a battle/map change (also
+      observed live -- an NPC "notices you" script can auto-step the player a tile); caller should
+      accept this as progress and re-plan from `new_xy` instead of marking a tile blocked.
+    - ("none", cur_xy): nothing happened after every retry -- an ordinary terrain/NPC-tile block,
+      not a dialogue. Caller falls back to the pre-existing blocked_tiles behavior.
+    """
+    for _ in range(_INTERACTION_CLEAR_RETRIES):
+        wrapper.step(_BTN_INDEX["a"], n=cfg.frames_per_press, settle=cfg.settle_frames)
+        s = ram_reader.read_all()
+        new_xy = _true_xy(s)
+        if _map_key(s) != start_map:
+            return "map_change", new_xy
+        if s["battle_type"] > 0:
+            return "battle", new_xy
+        if new_xy != cur_xy:
+            return "moved", new_xy
+    return "none", cur_xy
 
 
 def _finish_at_goal(wrapper, ram_reader, cfg, grids, start_map, cur_xy, last_direction):
@@ -181,6 +227,11 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
        Fix: before planning, check `pathfind.ledge_recovery_direction`; if `cur_xy` is mid-hop,
        skip planning and press the recovered direction directly -- pressing it again is exactly
        how the real game gets you off of either tile too.
+    4. Stuck in a scripted NPC dialogue: a stationary NPC's "spotted you" trigger seizes
+       directional input in every direction at once (not just the tile it's blocking) until its
+       dialogue is advanced with 'a' -- see _clear_blocking_interaction's docstring for the full
+       live-emulator trace. Fix: once a direction has exhausted _STEP_RETRIES with zero movement,
+       try _clear_blocking_interaction before concluding the target is genuinely blocked.
     """
     goal = (args["x"], args["y"])
     start_map = _map_key(state0)
@@ -229,10 +280,19 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
                 moved = True
                 last_direction = direction
                 break
-        if not moved and target is not None:
-            # Genuinely can't step onto `target` right now (e.g. an NPC occupying a tile the
-            # static grid calls walkable) -- mark it and re-plan a detour next iteration.
-            blocked_tiles.add(target)
+        if not moved:
+            # Genuinely can't step onto `target` right now -- either an NPC occupying a tile the
+            # static grid calls walkable, or (see docstring point 4) a scripted dialogue that has
+            # seized input in every direction. Try clearing the latter before giving up.
+            outcome, new_xy = _clear_blocking_interaction(wrapper, ram_reader, cfg, start_map,
+                                                            cur_xy)
+            if outcome in ("battle", "map_change"):
+                return {"ok": True, "note": f"navigated to ({new_xy[0]}, {new_xy[1]})",
+                        "stopped_early": True}
+            if outcome == "moved":
+                cur_xy = new_xy  # a cutscene shuffled us; re-plan from here next iteration
+            elif target is not None:
+                blocked_tiles.add(target)
 
     return {"ok": False, "note": f"path blocked at ({cur_xy[0]}, {cur_xy[1]})",
             "stopped_early": True}
