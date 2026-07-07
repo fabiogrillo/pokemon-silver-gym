@@ -43,3 +43,6 @@ class LLMConfig:
     send_image: bool = True
     log_dir: str = "runs/llm_logs"
     confine_to_home_map: bool = False  # gym-slice harness guardrail (June arc); MUST be False for the corridor task
+    leg_mode: bool = True  # LLM-3: harness-owned goals via agents/llm/legs.LegTracker (per-turn note
+                            # names the current corridor leg's target). False = LLM-2's free-form
+                            # prompting (the model itself picks navigate_to targets).

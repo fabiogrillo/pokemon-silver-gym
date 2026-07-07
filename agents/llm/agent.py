@@ -6,6 +6,7 @@ from .perception import build_user_content, waypoint_ordinal
 from .tools import OVERWORLD_TOOLS, BATTLE_TOOLS, execute_tool, validate_tool_call, ToolValidationError
 from .memory import ShortTermMemory
 from .llm_client import OllamaClient
+from .legs import LegTracker
 
 _DIRS = ("up", "down", "left", "right")
 
@@ -47,6 +48,7 @@ class ReActAgent:
     def __init__(self, cfg):
         self.cfg = cfg
         self.client = OllamaClient(cfg)
+        self.legs = LegTracker()  # LLM-3: harness-owned corridor-leg goals (see cfg.leg_mode)
 
     def run(self, wrapper, reader, on_step=None) -> dict:
         cfg = self.cfg
@@ -115,6 +117,14 @@ class ReActAgent:
                 else:
                     note += ("\nWalkable directions from here: NONE — a trainer or sign is blocking "
                              "you; press 'a' to interact/battle.")
+                if cfg.leg_mode:
+                    # LLM-3: the harness (not the model) picks the current strategic target — see
+                    # agents/llm/legs.py's module docstring for why (LLM-2's model perseverated on
+                    # one mid-town coordinate). local_x/local_y are RAM-swapped; un-swap to TRUE
+                    # (x, y) before handing off, mirroring perception.format_state_text.
+                    true_x, true_y = state["local_y"], state["local_x"]
+                    note += "\n" + self.legs.goal_note(
+                        state["map_bank"], state["map_number"], true_x, true_y)
             content = build_user_content(state, frame, note, cfg.send_image)
             messages = [{"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": content}]
@@ -184,6 +194,7 @@ class ReActAgent:
             if on_step:
                 on_step(step, state, out, obs, frame)
 
+        visited_maps = {(b, n) for b, n, _x, _y in tiles}
         return {"badge": reader.read_all()["zephyr"], "steps": step + 1, "tokens": tokens,
                 "battles_won": battles_won, "tiles": len(tiles), "stopped": stopped,
-                "max_waypoint": max_wp}
+                "max_waypoint": max_wp, "legs_completed": self.legs.completed_count(visited_maps)}

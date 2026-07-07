@@ -164,3 +164,26 @@ def test_completed_count_stops_at_first_gap():
 def test_completed_count_zero_when_nothing_visited():
     tracker = legs.LegTracker()
     assert tracker.completed_count(set()) == 0
+
+
+def test_goal_note_gatehouse_interior_returns_static_exit_message():
+    # (26, 11) is the Violet Gatehouse interior -- no collision grid is committed for it (see the
+    # module docstring's scope note), so it has no leg of its own and would otherwise fall through
+    # to the generic off-route message. It IS on the route (between Route 31's leg and Violet
+    # City's), so it needs its own static, hand-written exit instruction instead.
+    tracker = legs.LegTracker()
+    note = tracker.goal_note(26, 11, 5, 6)
+    assert note == (
+        "You are inside the Route 31 gatehouse: walk WEST (a few tiles) to exit into Violet City."
+    )
+
+
+def test_goal_note_gatehouse_interior_does_not_disturb_last_on_route_tracking():
+    # Passing through the gatehouse should not clobber the "last on-route leg" memory used by the
+    # generic off-route message -- Route 31 is still the last real leg the player was on.
+    tracker = legs.LegTracker()
+    route_31_leg = legs.LegTracker().current(26, 2)
+    tracker.goal_note(26, 2, 4, 7)  # establish Route 31 as last-on-route
+    tracker.goal_note(26, 11, 5, 6)  # pass through the gatehouse
+    note = tracker.goal_note(99, 99, 0, 0)  # now truly off-route
+    assert route_31_leg.name in note

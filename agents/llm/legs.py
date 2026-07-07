@@ -117,6 +117,16 @@ _GYM_DOOR: tuple[int, int] = (18, 17)
 # assets/collision/route_31.json["walkable"][6][4] == 1 and ["walkable"][7][4] == 1.
 _ROUTE_31_GATE_DOOR: tuple[int, int] = (4, 7)
 
+# The (26, 11) Violet Gatehouse interior itself (see the module docstring's scope note: no
+# collision grid is committed for it, so it has no Leg of its own). It IS on the route -- the
+# player walks through it between Route 31's leg and Violet City's -- so `LegTracker.goal_note`
+# special-cases this map key with a static, hand-written instruction rather than falling through
+# to the generic off-route message.
+_GATEHOUSE_INTERIOR_MAP_KEY: tuple[int, int] = (26, 11)
+_GATEHOUSE_INTERIOR_NOTE = (
+    "You are inside the Route 31 gatehouse: walk WEST (a few tiles) to exit into Violet City."
+)
+
 # (map_key, display name, border side, per-turn hint) for the 4 plain border-exit legs, in
 # corridor order (New Bark -> ... -> Route 30, the last map with a genuine walkable border
 # crossing -- Route 31's crossing is the gatehouse-door override above).
@@ -184,6 +194,8 @@ class LegTracker:
         """One-line per-turn goal for the prompt: leg name, current position, target tile, and a
         navigate_to instruction. Off-route (map not on the corridor): tells the model to return to
         the corridor, naming the last leg it was on (if any)."""
+        if (bank, num) == _GATEHOUSE_INTERIOR_MAP_KEY:
+            return _GATEHOUSE_INTERIOR_NOTE
         leg = self.current(bank, num)
         if leg is not None:
             self._last_on_route = leg
