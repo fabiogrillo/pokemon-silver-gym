@@ -2564,3 +2564,20 @@ remains). Tests: `test_visited_obs.py`, `test_confinement.py`, `test_dynamic_bud
 **LAUNCH PENDING** (controller launches when the GPU frees up after the LLM runs).
 Launch command (controller's step, verbatim from 088/089's protocol):
 `nohup .venv/bin/python -m agents.rl.train_cnn > runs/agent_090_launch.log 2>&1 &`
+
+### LLM-3 — harness leg goals (L4) — verdict (2026-07-08)
+
+**Run 1** (`run_1783429465.jsonl`, 500 steps): **the breakthrough** — New Bark → Route 29 (scripted
+rival NPC engaged + wilds, 8 battles won) → Cherrygrove in 3 steps → **Route 30** (wp 2, 4 legs),
+still advancing at the step cap. First LLM traversal of the corridor in the project.
+**Run 2** (`run_1783444421.jsonl`, cap raised to 1000, documented): high-variance stall — a roaming
+NPC near x=32 on Route 29 sat on/next to the player long enough to seal `plan()`'s start check:
+957× "no path to (0,7)", 7 tiles total. Same failure CLASS as the scripted-rival case (fixed in
+ab4cacc) but at a different tile with a wandering sprite — case-by-case fixes don't close this.
+
+**Verdict:** the leg harness works and the model is now OBEDIENT (~96% of overworld turns call
+navigate_to at the current leg target). The dominant failure moved from the model to the EXECUTOR's
+handling of dynamic obstacles. LLM-4 therefore deviates from the planned minimap/scratchpad (which
+target model reasoning the model no longer bottlenecks on) to a general executor fallback: when
+plan() fails, take one probe-verified greedy step toward the goal and let the next call re-plan.
+Deviation grounded in the two-run evidence; minimap/scratchpad remain available for LLM-5 if needed.
