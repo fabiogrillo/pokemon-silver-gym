@@ -14,7 +14,7 @@ import glob
 import heapq
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 COLLISION_DIR = "assets/collision"
 
@@ -29,12 +29,27 @@ class Grid:
     width: int
     height: int
     walkable: list  # row-major grid[y][x], truthy = walkable
+    # {(x, y): [direction, ...]} -- TRUE-(x,y) ledge tiles and the facing(s) that may hop them (see
+    # extract_collision.py's module docstring). A ledge tile is ALWAYS 0 in `walkable` (it's never
+    # a legal place to stop); `astar()` uses this side-channel to route a hop straight through it
+    # instead of treating it as a dead wall. Defaults to {} so pre-v2 grids/synthetic test grids
+    # that never pass `ledges` behave exactly like before.
+    ledges: dict = field(default_factory=dict)
 
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
 
     def is_walkable(self, x: int, y: int) -> bool:
         return self.in_bounds(x, y) and bool(self.walkable[y][x])
+
+
+def _parse_ledges(raw: dict) -> dict:
+    """{'y,x': ['down', ...]} (JSON, string keys) -> {(x, y): ['down', ...]} (TRUE (x, y) tuples)."""
+    ledges = {}
+    for key, dirs in raw.items():
+        y_str, x_str = key.split(",")
+        ledges[(int(x_str), int(y_str))] = list(dirs) if isinstance(dirs, list) else [dirs]
+    return ledges
 
 
 def load_grids(collision_dir: str = COLLISION_DIR) -> dict:
@@ -45,7 +60,7 @@ def load_grids(collision_dir: str = COLLISION_DIR) -> dict:
             g = json.load(f)
         key = (g["bank"], g["num"])
         grids[key] = Grid(bank=g["bank"], num=g["num"], width=g["width"], height=g["height"],
-                           walkable=g["walkable"])
+                           walkable=g["walkable"], ledges=_parse_ledges(g.get("ledges", {})))
     return grids
 
 
@@ -58,8 +73,20 @@ def astar(grid: Grid, start_xy: tuple, goal_xy: tuple, blocked: frozenset = froz
     collision grid has no notion of dynamic obstacles; see extract_collision.py's module
     docstring on scope).
 
+    `grid.ledges` tiles are never entered as a plain step (they're always 0 in `walkable`). Instead,
+    a ledge tile L with allowed direction(s) D is crossed as a single hop: moving in direction
+    d in D from the tile immediately opposite L (i.e. `L - d`) lands three tiles away, at `L + 2*d`
+    -- the real game always places a non-walkable "buffer" tile at `L + d` that the hop clears
+    (see the neighbor expansion below for why) -- see extract_collision.py's module docstring.
+    Entering L from any other side, or in any other direction, is not a valid move (matches the
+    one-directional real-game hop).
+
     Returns a list of direction strings ("up"/"down"/"left"/"right") to press in order, an empty
     list if start == goal, or None if unreachable (including a wall/out-of-bounds start or goal).
+    Each returned direction corresponds to one planned button press, but a ledge-hop direction can
+    take the executor two real presses to fully resolve (one to step onto the ledge tile itself,
+    one more to complete the jump over the buffer tile) -- see agents/llm/tools._execute_navigate's
+    ledge-escape handling for how the executor stays correct either way.
     """
     if not grid.is_walkable(*start_xy) or not grid.is_walkable(*goal_xy) or goal_xy in blocked:
         return None
@@ -89,14 +116,67 @@ def astar(grid: Grid, start_xy: tuple, goal_xy: tuple, blocked: frozenset = froz
             return path
         closed.add(current)
         for direction, (dx, dy) in DIR_DELTA.items():
-            nxt = (current[0] + dx, current[1] + dy)
-            if nxt in closed or nxt in blocked or not grid.is_walkable(*nxt):
-                continue
+            adjacent = (current[0] + dx, current[1] + dy)
+            ledge_dirs = grid.ledges.get(adjacent)
+            if ledge_dirs is not None:
+                # `adjacent` is a ledge tile -- always non-walkable in the matrix, so it's never a
+                # stop-over node. It's only traversable as a hop: entered from the foothold
+                # OPPOSITE its allowed direction(s). The landing tile is TWO tiles past the ledge
+                # (three tiles from the foothold), not one: every single ledge in every extracted
+                # map (77/77, checked exhaustively) has a non-walkable "buffer" tile immediately
+                # past it and open ground only two tiles past it -- i.e. every ledge block is built
+                # as [foothold][ledge][buffer wall][landing]. This matches pokegold's engine
+                # (engine/overworld/player_movement.asm .TryStep/.TryJump): the buffer tile is what
+                # makes an ordinary step fail and fall through to the jump check in the first
+                # place, and the jump animation (STEP_LEDGE) is sized to clear exactly that one
+                # tile, landing on the far side of it -- the game never re-checks collision on the
+                # buffer tile itself, which is why it's safe to skip over here without a
+                # walkability check.
+                if direction not in ledge_dirs or adjacent in blocked:
+                    continue
+                nxt = (adjacent[0] + 2 * dx, adjacent[1] + 2 * dy)
+                if nxt in closed or nxt in blocked or not grid.is_walkable(*nxt):
+                    continue
+            else:
+                nxt = adjacent
+                if nxt in closed or nxt in blocked or not grid.is_walkable(*nxt):
+                    continue
             tentative = g + 1
             if tentative < best_g.get(nxt, float("inf")):
                 best_g[nxt] = tentative
                 came_from[nxt] = (current, direction)
                 heapq.heappush(open_heap, (tentative + heuristic(nxt), tentative, nxt))
+    return None
+
+
+def ledge_recovery_direction(grid: Grid, xy: tuple) -> str | None:
+    """If `xy` is a real, live position the A* graph has no node for because it's mid-hop over a
+    ledge, return the direction to press to keep going. None if `xy` is ordinary plannable ground.
+
+    Two tiles of a ledge hop are 0 in `grid.walkable` and have no A* node (see astar()'s docstring):
+    the ledge tile L itself, and the non-walkable "buffer" tile at `L + direction` that the hop
+    clears. `cfg.frames_per_press` isn't guaranteed to cover a whole hop's animation in one press
+    (same root cause as the walk-cycle overshoot documented in agents/llm/tools._execute_navigate),
+    so the live player can end up standing on EITHER of those two tiles mid-hop -- confirmed
+    directly against the emulator. Both recover the same way: press the ledge's own hop direction
+    again (exactly what completes/re-triggers the jump in the real game too).
+
+    Ordinary walkable tiles always return None here even if they happen to sit at the same offset
+    as some ledge's buffer tile, because a buffer tile is by construction never walkable (see
+    extract_collision.py's module docstring: 77/77 ledges checked, zero exceptions) -- so a
+    walkable `xy` can never actually be one, and checking `is_walkable` first avoids ever
+    second-guessing an ordinary in-progress route.
+    """
+    if grid.is_walkable(*xy):
+        return None
+    ledge_dirs = grid.ledges.get(xy)
+    if ledge_dirs:
+        return ledge_dirs[0]
+    for direction, (dx, dy) in DIR_DELTA.items():
+        candidate_ledge = (xy[0] - dx, xy[1] - dy)
+        dirs = grid.ledges.get(candidate_ledge)
+        if dirs and direction in dirs:
+            return direction
     return None
 
 

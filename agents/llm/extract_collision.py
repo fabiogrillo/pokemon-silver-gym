@@ -23,15 +23,49 @@ these maps, which pokegold disassembles just like pokecrystal):
   data/collision/collision_permissions.asm  256-entry table (index = collision byte) -> LAND_TILE /
                                          WATER_TILE / WALL_TILE (optionally OR'd with TALK).
 
-Walkability rule (v1, conservative): LAND_TILE -> walkable; WATER_TILE, WALL_TILE -> not; ledges
-(collision byte in the COLL_HOP_* range, hi nibble $A0 per HI_NYBBLE_LEDGES) -> forced NOT walkable
-even though their permission-table entry is LAND_TILE (ledges are one-directional hops; a plain
-walkability grid can't express that, so v1 routes around them instead of risking a bad two-way edge).
+Walkability rule: LAND_TILE -> walkable; WATER_TILE, WALL_TILE -> not; ledges (collision byte in
+the COLL_HOP_* range, hi nibble $A0 per HI_NYBBLE_LEDGES) -> still marked NOT walkable in the plain
+`walkable` matrix (a ledge tile is never a legal place to stop), but ALSO recorded, with its
+allowed hop direction(s), in a separate `ledges` map (v2; see below). `agents/llm/pathfind.py`'s A*
+uses that side-channel to route a one-directional hop THROUGH a ledge tile instead of treating it
+as a dead wall, without changing what "walkable" means for every other consumer of these grids.
+
+Ledge directions (pokegold's engine/overworld/player_movement.asm `.TryJump`/`.ledge_table`, keyed
+by `collision_byte & 7`): COLL_HOP_RIGHT/LEFT/UP/DOWN allow a hop only when facing that one
+direction; COLL_HOP_DOWN_RIGHT/DOWN_LEFT/UP_RIGHT/UP_LEFT are corner tiles that allow a hop when
+facing EITHER of the two named directions (the game ANDs the player's facing bitmask against the
+tile's allowed-facings bitmask). This script derives the direction list straight from each token's
+name (`"HOP_DOWN_LEFT"` -> `["down", "left"]`) rather than hand-maintaining a lookup table, so any
+future HOP_* combination is picked up automatically.
+
+Hop distance (empirically confirmed, 77/77 ledge/direction pairs across every extracted map, zero
+exceptions): every ledge tile L has a non-walkable tile at `L + direction` and open ground only at
+`L + 2*direction` -- i.e. the tile layout is always [foothold][ledge L][non-walkable buffer]
+[landing], not [foothold][ledge L][landing]. This matches `.TryStep`/`.TryJump`'s two-phase design:
+an ordinary step from the foothold onto L succeeds first (L's permission-table entry is LAND_TILE,
+so nothing stops a plain walk onto it), and only the FOLLOWING step -- from L towards the buffer
+tile -- fails collision (`.CheckLandPerms` on the buffer tile) and falls through to `.TryJump`,
+which reads L's own collision byte (the tile the player is now standing on) to decide whether to
+trigger STEP_LEDGE. The jump is sized to clear exactly that one buffer tile, landing on the far
+side of it; the buffer tile's own collision is never re-checked once the jump is decided.
+`agents/llm/pathfind.py`'s A* models this as a single hop edge from the foothold directly to
+`L + 2*direction`, skipping L and the buffer tile as graph nodes entirely (matches the "ledge tile
+stays walkable=0" convention below) -- but see agents/llm/tools._execute_navigate's ledge-escape
+handling for what happens if the *live* player ends up standing exactly on L anyway (a real,
+reachable position, confirmed directly against the emulator), which the offline grid alone can't
+route from.
 
 Grid convention: grid[y][x], TRUE axes (x east, y south) -- this matches the .blk file's own layout
 (row-major by block-row=Y, block-col=X) directly; no un-swap needed here. The un-swap that matters
 elsewhere (agents/rl/map_layout.ram_to_image_px) is only for the *live RAM* fields, which this
 offline script never reads except in --verify, where it is applied explicitly.
+
+Output JSON schema (v2, backward compatible): unchanged `bank`/`num`/`width`/`height`/`walkable`
+keys, plus an optional `ledges` object mapping `"y,x"` (TRUE axes, same convention as `walkable`'s
+indexing) -> a list of one or two direction strings ("up"/"down"/"left"/"right") the tile can be
+hopped while facing. Only tiles that are ledges appear in the map; every other tile is implicitly
+"not a ledge" whether or not `ledges` itself is present, so old readers that never look at
+`ledges` see byte-identical `walkable` behavior to v1.
 """
 
 import argparse
@@ -116,8 +150,10 @@ def parse_map_block_size(text: str, const_name: str) -> tuple:
 
 
 # Ledges (COLL_HOP_*) sit at hi-nibble $A0 (HI_NYBBLE_LEDGES, constants/collision_constants.asm).
-# Their permission-table entry is LAND_TILE (you CAN hop down them), but a hop is one-directional,
-# which an undirected walkability grid can't express -- v1 conservatively marks them non-walkable.
+# Their permission-table entry is LAND_TILE (you CAN hop them), but a hop is one-directional (or
+# two-directional for the diagonal-corner tokens), which the plain `walkable` matrix can't express
+# -- classify_token() still marks them non-walkable there; ledge_hop_directions() below recovers
+# the direction(s) separately for the `ledges` side-channel.
 _LEDGE_HI_NIBBLE = 0xA0
 
 
@@ -130,22 +166,45 @@ def classify_token(token: str, coll_consts: dict, perm_table: list) -> int:
     return 1 if (perm & 0x0F) == 0x00 else 0  # low nibble 0x00 == LAND_TILE
 
 
+def is_ledge_token(token: str, coll_consts: dict) -> bool:
+    """True if `token`'s collision id falls in the COLL_HOP_* range (hi nibble $A0)."""
+    coll_id = coll_consts[f"COLL_{token}"]
+    return (coll_id & 0xF0) == _LEDGE_HI_NIBBLE
+
+
+def ledge_hop_directions(token: str) -> list:
+    """'HOP_DOWN_LEFT' -> ['down', 'left']; 'HOP_DOWN' -> ['down']; 'HOP_RIGHT' -> ['right'].
+
+    Derived straight from the token's own name (matches pokegold's engine/overworld/
+    player_movement.asm `.ledge_table`, which ANDs the player's facing bitmask against a
+    per-token allowed-facings bitmask -- FACE_DOWN|FACE_LEFT for HOP_DOWN_LEFT, etc.) so any
+    future HOP_* combination is picked up automatically without a hand-maintained table.
+    """
+    assert token.startswith("HOP_"), token
+    return [part.lower() for part in token[len("HOP_"):].split("_")]
+
+
 def build_grid(blk_bytes: bytes, w_blocks: int, h_blocks: int, quad_table: list,
-                coll_consts: dict, perm_table: list) -> list:
+                coll_consts: dict, perm_table: list) -> tuple:
     """Expand block-resolution .blk data + per-block quadrant collision into a tile-resolution
-    walkability grid: grid[y][x], y in [0, 2*h_blocks), x in [0, 2*w_blocks)."""
+    walkability grid: grid[y][x], y in [0, 2*h_blocks), x in [0, 2*w_blocks); plus a
+    `{(x, y): [direction, ...]}` map of ledge tiles found along the way (see module docstring)."""
     assert len(blk_bytes) == w_blocks * h_blocks, (len(blk_bytes), w_blocks, h_blocks)
     width, height = 2 * w_blocks, 2 * h_blocks
     grid = [[0] * width for _ in range(height)]
+    ledges = {}
     for by in range(h_blocks):
         for bx in range(w_blocks):
             block_id = blk_bytes[by * w_blocks + bx]
             ul, ur, dl, dr = quad_table[block_id]
-            grid[2 * by][2 * bx] = classify_token(ul, coll_consts, perm_table)
-            grid[2 * by][2 * bx + 1] = classify_token(ur, coll_consts, perm_table)
-            grid[2 * by + 1][2 * bx] = classify_token(dl, coll_consts, perm_table)
-            grid[2 * by + 1][2 * bx + 1] = classify_token(dr, coll_consts, perm_table)
-    return grid
+            for token, (tx, ty) in (
+                (ul, (2 * bx, 2 * by)), (ur, (2 * bx + 1, 2 * by)),
+                (dl, (2 * bx, 2 * by + 1)), (dr, (2 * bx + 1, 2 * by + 1)),
+            ):
+                grid[ty][tx] = classify_token(token, coll_consts, perm_table)
+                if is_ledge_token(token, coll_consts):
+                    ledges[(tx, ty)] = ledge_hop_directions(token)
+    return grid, ledges
 
 
 def extract_all():
@@ -171,15 +230,18 @@ def extract_all():
             )
 
         blk_bytes = fetch_bytes(f"maps/{map_name}.blk")
-        grid = build_grid(blk_bytes, w_blocks, h_blocks, quad_table, coll_consts, perm_table)
+        grid, ledges = build_grid(blk_bytes, w_blocks, h_blocks, quad_table, coll_consts, perm_table)
 
         width, height = 2 * w_blocks, 2 * h_blocks
         flat = [c for row in grid for c in row]
         pct = 100.0 * sum(flat) / len(flat)
         print(f"  {map_name:18s} ({bank:2d},{num:2d}) {width:3d}x{height:<3d} tiles  "
-              f"walkable {sum(flat):4d}/{len(flat):4d} ({pct:5.1f}%)  -> {OUT_DIR}/{out_name}")
+              f"walkable {sum(flat):4d}/{len(flat):4d} ({pct:5.1f}%)  ledges {len(ledges):3d}  "
+              f"-> {OUT_DIR}/{out_name}")
 
-        out = {"bank": bank, "num": num, "width": width, "height": height, "walkable": grid}
+        ledges_out = {f"{y},{x}": dirs for (x, y), dirs in sorted(ledges.items())}
+        out = {"bank": bank, "num": num, "width": width, "height": height, "walkable": grid,
+               "ledges": ledges_out}
         with open(os.path.join(OUT_DIR, out_name), "w") as f:
             json.dump(out, f)
 

@@ -103,6 +103,37 @@ def test_navigate_to_border_tile_crosses_into_next_map(emulator):
     assert obs["stopped_early"] is True
 
 
+def test_navigate_to_hops_real_route_30_ledge(ledge_emulator):
+    # Emulator regression for the directional-ledge fix (agents/llm/pathfind.py's astar() hop
+    # edges + ledge_recovery_direction). saves/crossing.state starts on Route 30 (bank 26, num 1)
+    # at true (6, 3); assets/collision/route_30.json has a real HOP_DOWN ledge at (5, 2), foothold
+    # (5, 1), landing (5, 4) (two tiles past the ledge, past a non-walkable "buffer" tile at
+    # (5, 3) -- see extract_collision.py's module docstring on why the real hop distance is three
+    # tiles from the foothold, not two).
+    #
+    # A single navigate_to call must cross the ledge cleanly, matching how a real player would
+    # play through it -- confirmed directly against the emulator during this task: before the
+    # ledge_recovery_direction fix, cfg.frames_per_press (24 frames) sometimes wasn't enough to
+    # finish the whole hop animation in one press, and the live player was observed parked exactly
+    # on the ledge tile (5, 2) or its buffer tile (5, 3) -- both non-walkable in the static grid --
+    # after which pathfind.plan()'s first-line is_walkable(start) check failed for literally any
+    # goal, reproducing the "no path to (0, 7)" x334 symptom this task set out to fix.
+    wrapper, reader = ledge_emulator
+    before = reader.read_all()
+    assert (before["map_bank"], before["map_number"]) == (26, 1)  # Route 30
+    assert _true_xy(before) == (6, 3)
+
+    grid = pathfind.load_grids()[(26, 1)]
+    assert grid.ledges.get((5, 2)) == ["down"]
+    assert grid.is_walkable(5, 4)
+
+    obs = execute_tool("navigate_to", {"x": 5, "y": 4}, wrapper, reader, CFG)
+
+    after_true = _true_xy(reader.read_all())
+    assert obs["ok"] is True
+    assert after_true == (5, 4)
+
+
 def test_navigate_to_south_changes_y_not_x(emulator):
     # Regression test (south leg) for the same axis mix-up: SOUTH must change y only.
     #

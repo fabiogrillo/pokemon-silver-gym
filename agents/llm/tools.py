@@ -166,10 +166,26 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
        (12,11) -> navigated to (13,11)" free-form-run symptom was). Fix: re-derive the plan from
        wherever we actually land after *every* press, so an overshoot just becomes the new start
        position for the next A* call instead of corrupting the rest of a stale route.
+    3. Landing mid-hop over a ledge: `assets/collision/*.json` ledge tiles (and the non-walkable
+       "buffer" tile immediately past each one -- see pathfind.ledge_recovery_direction's
+       docstring) are intentionally 0 in the static grid, since pathfind.py's A* only ever crosses
+       a ledge as a single atomic hop edge straight from the foothold to the far landing tile. But
+       the *live* player can genuinely end up standing exactly on either of those two tiles
+       mid-hop if a press's frame budget doesn't cover the whole jump animation in one go (same
+       root cause as bug 2 above) -- confirmed directly against the emulator
+       (saves/crossing.state, walking towards a nearby interior tile overshoots onto Route 30's
+       ledge tile (4, 2) and, separately, onto its buffer tile (4, 3)). Once that happens,
+       `pathfind.plan()`'s very first check (`grid.is_walkable(start)`) fails for literally any
+       goal, and the walk loop below would otherwise report "no path" forever with no way to move
+       off of it (this reproduces the "no path to (0, 7)" x334 symptom this task set out to fix).
+       Fix: before planning, check `pathfind.ledge_recovery_direction`; if `cur_xy` is mid-hop,
+       skip planning and press the recovered direction directly -- pressing it again is exactly
+       how the real game gets you off of either tile too.
     """
     goal = (args["x"], args["y"])
     start_map = _map_key(state0)
     grids = pathfind.load_grids()
+    grid = grids.get(start_map)
     cur_xy = _true_xy(state0)
     blocked_tiles: set = set()
     last_direction = None  # direction of the last successful step; feeds border_exit_direction's
@@ -180,14 +196,23 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
             return _finish_at_goal(wrapper, ram_reader, cfg, grids, start_map, cur_xy,
                                     last_direction)
 
-        directions = pathfind.plan(state0["map_bank"], state0["map_number"], cur_xy, goal,
-                                    grids=grids, blocked=frozenset(blocked_tiles))
-        if not directions:  # None (unreachable) -- goal already handled by the check above
-            return {"ok": False, "note": f"no path to ({goal[0]}, {goal[1]})", "stopped_early": True}
+        recovery_direction = pathfind.ledge_recovery_direction(grid, cur_xy) if grid else None
+        if recovery_direction is not None:
+            # Mid-hop over a ledge (see docstring point 3 above) -- not a plannable A* node.
+            # `target` is left None since there's no single adjacent tile to mark blocked if this
+            # doesn't move us (see the `if not moved` handling below).
+            direction = recovery_direction
+            target = None
+        else:
+            directions = pathfind.plan(state0["map_bank"], state0["map_number"], cur_xy, goal,
+                                        grids=grids, blocked=frozenset(blocked_tiles))
+            if not directions:  # None (unreachable) -- goal already handled by the check above
+                return {"ok": False, "note": f"no path to ({goal[0]}, {goal[1]})",
+                        "stopped_early": True}
+            direction = directions[0]
+            dx, dy = pathfind.DIR_DELTA[direction]
+            target = (cur_xy[0] + dx, cur_xy[1] + dy)
 
-        direction = directions[0]
-        dx, dy = pathfind.DIR_DELTA[direction]
-        target = (cur_xy[0] + dx, cur_xy[1] + dy)
         moved = False
         for _attempt in range(_STEP_RETRIES):
             wrapper.step(_BTN_INDEX[direction], n=cfg.frames_per_press)
@@ -204,7 +229,7 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
                 moved = True
                 last_direction = direction
                 break
-        if not moved:
+        if not moved and target is not None:
             # Genuinely can't step onto `target` right now (e.g. an NPC occupying a tile the
             # static grid calls walkable) -- mark it and re-plan a detour next iteration.
             blocked_tiles.add(target)
