@@ -108,6 +108,42 @@ _MAX_STEPS = 40
 # How many times to retry a single planned direction before concluding its target tile is
 # actually blocked (matches the previous "3 consecutive non-moves" desync guard).
 _STEP_RETRIES = 3
+# How many extra outward presses to try once we've arrived at a border-tile target -- GSC map
+# connections trigger on stepping PAST the edge, one tile further than any in-grid A* target can
+# reach (see pathfind.border_exit_direction). 3 matches _STEP_RETRIES's slack for the walk-cycle
+# overshoot described above.
+_BORDER_EXIT_RETRIES = 3
+
+
+def _finish_at_goal(wrapper, ram_reader, cfg, grids, start_map, cur_xy, last_direction):
+    """Arrived at the A* target `cur_xy` (same map as the call started on).
+
+    If `cur_xy` is an interior tile, the leg is simply done. If it's on the current map's border,
+    GSC won't trigger the neighboring-map connection until the player steps past the edge -- so
+    press the outward direction (pathfind.border_exit_direction) a few more times, reusing the
+    same map-change/battle early-stop checks as the main walk loop. This turns a leg that targets
+    an exit tile into an actual transition instead of parking on the border forever.
+    """
+    grid = grids.get(start_map)
+    exit_direction = pathfind.border_exit_direction(grid, cur_xy, last_direction) if grid else None
+    if exit_direction is None:
+        return {"ok": True, "note": f"navigated to ({cur_xy[0]}, {cur_xy[1]})", "stopped_early": False}
+
+    for _ in range(_BORDER_EXIT_RETRIES):
+        wrapper.step(_BTN_INDEX[exit_direction], n=cfg.frames_per_press)
+        s = ram_reader.read_all()
+        new_xy = _true_xy(s)
+        if _map_key(s) != start_map:
+            return {"ok": True,
+                    "note": f"navigated to ({cur_xy[0]}, {cur_xy[1]}) and crossed into the next "
+                            f"map at ({new_xy[0]}, {new_xy[1]})",
+                    "stopped_early": True}
+        if s["battle_type"] > 0:
+            return {"ok": True, "note": f"navigated to ({cur_xy[0]}, {cur_xy[1]})",
+                    "stopped_early": True}
+        cur_xy = new_xy  # rare walk-cycle overshoot could still move us without crossing yet
+
+    return {"ok": True, "note": f"navigated to ({cur_xy[0]}, {cur_xy[1]})", "stopped_early": False}
 
 
 def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
@@ -136,11 +172,13 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
     grids = pathfind.load_grids()
     cur_xy = _true_xy(state0)
     blocked_tiles: set = set()
+    last_direction = None  # direction of the last successful step; feeds border_exit_direction's
+                            # corner tie-break once we arrive at `goal` (see _finish_at_goal).
 
     for _ in range(_MAX_STEPS):
         if cur_xy == goal:
-            return {"ok": True, "note": f"navigated to ({cur_xy[0]}, {cur_xy[1]})",
-                    "stopped_early": False}
+            return _finish_at_goal(wrapper, ram_reader, cfg, grids, start_map, cur_xy,
+                                    last_direction)
 
         directions = pathfind.plan(state0["map_bank"], state0["map_number"], cur_xy, goal,
                                     grids=grids, blocked=frozenset(blocked_tiles))
@@ -164,6 +202,7 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
             if new_xy != cur_xy:
                 cur_xy = new_xy
                 moved = True
+                last_direction = direction
                 break
         if not moved:
             # Genuinely can't step onto `target` right now (e.g. an NPC occupying a tile the

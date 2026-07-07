@@ -75,6 +75,34 @@ def test_navigate_to_east_changes_x_not_y(emulator):
     assert after_true[1] == true_y      # y unchanged
 
 
+def test_navigate_to_border_tile_crosses_into_next_map(emulator):
+    # Regression test for the "parked on the border" bug: New Bark Town's west edge has 4
+    # grid-walkable tiles (assets/collision/new_bark.json col 0, rows 8/9/12/13 -- see
+    # agents/llm/legs.border_exits((24, 4), "west")), but only rows 8-9 are an actual Route 29
+    # connection; rows 12-13 are grid-walkable local terrain that's a dead end against the map
+    # edge (live-emulator-verified: repeated "left" presses from (0, 12)/(0, 13) never move the
+    # player or change the map). (0, 9) is both grid-walkable AND a real connection, so it's the
+    # target here.
+    #
+    # GSC only triggers a map connection when the player steps PAST the edge -- one more "left"
+    # press while standing on the border tile -- and A* can't plan an out-of-grid goal, so
+    # `navigate_to` used to stop exactly at (0, 9) and never actually leave the map (confirmed by
+    # running this exact call against the pre-fix executor: it reports "navigated to (0, 9)" and
+    # stays on map (24, 4) forever). The fix (agents/llm/tools._finish_at_goal +
+    # pathfind.border_exit_direction) presses the outward direction a few more times once the A*
+    # target itself is a border tile.
+    wrapper, reader = emulator
+    before = reader.read_all()
+    assert (before["map_bank"], before["map_number"]) == (24, 4)  # New Bark Town
+
+    obs = execute_tool("navigate_to", {"x": 0, "y": 9}, wrapper, reader, CFG)
+
+    after = reader.read_all()
+    assert obs["ok"] is True
+    assert (after["map_bank"], after["map_number"]) == (24, 3)  # Route 29 -- an actual transition
+    assert obs["stopped_early"] is True
+
+
 def test_navigate_to_south_changes_y_not_x(emulator):
     # Regression test (south leg) for the same axis mix-up: SOUTH must change y only.
     #

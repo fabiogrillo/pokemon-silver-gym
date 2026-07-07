@@ -100,6 +100,43 @@ def astar(grid: Grid, start_xy: tuple, goal_xy: tuple, blocked: frozenset = froz
     return None
 
 
+def border_exit_direction(grid: Grid, xy: tuple, last_direction: str | None = None) -> str | None:
+    """Return the direction that walks OUT of `grid` from `xy`, if `xy` sits on a map border.
+
+    GSC map connections only trigger when the player steps PAST the map edge -- one more
+    directional press while standing on the border tile. `astar()`/`plan()` can't route into
+    out-of-grid coordinates (there's no grid there), so a leg that targets a border tile as an
+    exit stops exactly AT the edge and never actually crosses. The executor
+    (agents/llm/tools._execute_navigate) calls this after arriving at a same-map A* target to
+    decide whether that one extra outward press is needed.
+
+    A tile can be on up to two borders at once (a corner). Tie-break: prefer the axis matching
+    `last_direction` (the direction of the final A* step that reached `xy`), since that's the axis
+    the leg was actually navigating along -- e.g. arriving at a corner by walking `down` means the
+    leg cares about the south connection, not the perpendicular one. If `last_direction` doesn't
+    resolve it (unknown, or doesn't match either border axis -- e.g. the caller was already
+    standing on the tile with no A* step taken), fall back to a fixed, deterministic candidate
+    order (left, right, up, down); this is an arbitrary but stable choice for the ambiguous case.
+
+    Returns None if `xy` isn't on any border.
+    """
+    x, y = xy
+    candidates = []
+    if x == 0:
+        candidates.append("left")
+    if x == grid.width - 1:
+        candidates.append("right")
+    if y == 0:
+        candidates.append("up")
+    if y == grid.height - 1:
+        candidates.append("down")
+    if not candidates:
+        return None
+    if last_direction in candidates:
+        return last_direction
+    return candidates[0]
+
+
 def plan(bank: int, num: int, start_true_xy: tuple, goal_true_xy: tuple,
          grids: dict | None = None, blocked: frozenset = frozenset()) -> list | None:
     """Same-map A* plan: (bank, num) select the grid, start/goal are TRUE (x, y).
