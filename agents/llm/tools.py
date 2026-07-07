@@ -101,37 +101,77 @@ def _true_xy(state):
     return state["local_y"], state["local_x"]
 
 
+# Bound on total presses per navigate_to call. Generous relative to any in-bounds map (the
+# largest collision grid is 20x18): a couple of extra steps of slack cover the occasional
+# overshoot-then-correct pair described below, without letting a truly stuck call spin forever.
+_MAX_STEPS = 40
+# How many times to retry a single planned direction before concluding its target tile is
+# actually blocked (matches the previous "3 consecutive non-moves" desync guard).
+_STEP_RETRIES = 3
+
+
 def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
+    """Walk the A* path one tile at a time, RE-PLANNING from the actual post-press position before
+    every single step (not just after a hard block).
+
+    Two independent bugs made the previous "plan once, blindly press the whole direction list"
+    design unreliable:
+
+    1. Dynamic obstacles: the static collision grid (assets/collision/*.json) only encodes
+       terrain, not NPCs. A* can plan through a tile an NPC happens to be standing on; the engine
+       then correctly refuses to move there. Fix: track tiles that fail to move into
+       (`blocked_tiles`) and route around them instead of aborting.
+    2. Press/walk-cycle misalignment: cfg.frames_per_press (24, tuned for dialogue advancement)
+       is not an exact multiple of the overworld's internal per-tile walk-cycle length (16
+       frames), so a single fixed-length press can advance 0, 1, *or 2* tiles depending on
+       animation phase -- confirmed empirically by holding "right" for repeated 24-frame presses
+       from a fixed save state and watching local_y jump by 1 or 2 tiles at random. A stale
+       multi-step plan silently drifts off course when this happens (this is what the "target
+       (12,11) -> navigated to (13,11)" free-form-run symptom was). Fix: re-derive the plan from
+       wherever we actually land after *every* press, so an overshoot just becomes the new start
+       position for the next A* call instead of corrupting the rest of a stale route.
+    """
     goal = (args["x"], args["y"])
-    directions = pathfind.plan(state0["map_bank"], state0["map_number"], _true_xy(state0), goal)
-    if directions is None:
-        return {"ok": False, "note": f"no path to ({goal[0]}, {goal[1]})", "stopped_early": True}
-
     start_map = _map_key(state0)
+    grids = pathfind.load_grids()
     cur_xy = _true_xy(state0)
-    non_moves = 0
-    reason = None
-    for direction in directions:
-        wrapper.step(_BTN_INDEX[direction], n=cfg.frames_per_press)
-        s = ram_reader.read_all()
-        new_xy = _true_xy(s)
-        non_moves = 0 if new_xy != cur_xy else non_moves + 1
-        cur_xy = new_xy
-        if _map_key(s) != start_map:
-            reason = "map_change"
-            break
-        if s["battle_type"] > 0:
-            reason = "battle"
-            break
-        if non_moves >= 3:
-            reason = "blocked"
-            break
+    blocked_tiles: set = set()
 
-    if reason == "blocked":
-        return {"ok": False, "note": f"path blocked at ({cur_xy[0]}, {cur_xy[1]})",
-                "stopped_early": True}
-    return {"ok": True, "note": f"navigated to ({cur_xy[0]}, {cur_xy[1]})",
-            "stopped_early": reason is not None}
+    for _ in range(_MAX_STEPS):
+        if cur_xy == goal:
+            return {"ok": True, "note": f"navigated to ({cur_xy[0]}, {cur_xy[1]})",
+                    "stopped_early": False}
+
+        directions = pathfind.plan(state0["map_bank"], state0["map_number"], cur_xy, goal,
+                                    grids=grids, blocked=frozenset(blocked_tiles))
+        if not directions:  # None (unreachable) -- goal already handled by the check above
+            return {"ok": False, "note": f"no path to ({goal[0]}, {goal[1]})", "stopped_early": True}
+
+        direction = directions[0]
+        dx, dy = pathfind.DIR_DELTA[direction]
+        target = (cur_xy[0] + dx, cur_xy[1] + dy)
+        moved = False
+        for _attempt in range(_STEP_RETRIES):
+            wrapper.step(_BTN_INDEX[direction], n=cfg.frames_per_press)
+            s = ram_reader.read_all()
+            new_xy = _true_xy(s)
+            if _map_key(s) != start_map:
+                return {"ok": True, "note": f"navigated to ({new_xy[0]}, {new_xy[1]})",
+                        "stopped_early": True}
+            if s["battle_type"] > 0:
+                return {"ok": True, "note": f"navigated to ({new_xy[0]}, {new_xy[1]})",
+                        "stopped_early": True}
+            if new_xy != cur_xy:
+                cur_xy = new_xy
+                moved = True
+                break
+        if not moved:
+            # Genuinely can't step onto `target` right now (e.g. an NPC occupying a tile the
+            # static grid calls walkable) -- mark it and re-plan a detour next iteration.
+            blocked_tiles.add(target)
+
+    return {"ok": False, "note": f"path blocked at ({cur_xy[0]}, {cur_xy[1]})",
+            "stopped_early": True}
 
 
 def execute_tool(name, args, wrapper, ram_reader, cfg) -> dict:

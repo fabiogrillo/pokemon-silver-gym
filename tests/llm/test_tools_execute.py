@@ -1,5 +1,6 @@
+from agents.llm import pathfind
 from agents.llm.config import LLMConfig
-from agents.llm.tools import execute_tool
+from agents.llm.tools import _true_xy, execute_tool
 
 CFG = LLMConfig()
 
@@ -48,3 +49,60 @@ def test_navigate_to_walks_north_in_gym(gym_emulator):
     assert obs["ok"] is True
     assert after_true[1] < true_y  # moved toward the target (north = smaller true y)
     assert after_true == goal
+
+
+def test_navigate_to_east_changes_x_not_y(emulator):
+    # Regression test for an axis mix-up between pathfind.py's A*-step->button conversion and the
+    # executor's TRUE (x, y) re-reads: EAST must change x only. saves/egg_delivered_clean.state
+    # spawns in New Bark Town (bank 24, num 4) at TRUE (6, 6); (8, 6) is grid-walkable and
+    # live-emulator-verified clear (no NPC in the way, unlike two tiles south -- see the south
+    # test below).
+    wrapper, reader = emulator
+    before = reader.read_all()
+    true_x, true_y = _true_xy(before)
+    goal = (true_x + 2, true_y)
+
+    grid = pathfind.load_grids()[(before["map_bank"], before["map_number"])]
+    assert grid.is_walkable(*goal), "test setup: goal must be grid-walkable"
+
+    obs = execute_tool("navigate_to", {"x": goal[0], "y": goal[1]}, wrapper, reader, CFG)
+
+    after_true = _true_xy(reader.read_all())
+    assert obs["ok"] is True
+    assert obs["stopped_early"] is False
+    assert after_true == goal
+    assert after_true[0] == true_x + 2  # x moved east
+    assert after_true[1] == true_y      # y unchanged
+
+
+def test_navigate_to_south_changes_y_not_x(emulator):
+    # Regression test (south leg) for the same axis mix-up: SOUTH must change y only.
+    #
+    # Two tiles due south of the raw spawn tile, (6, 8), is grid-walkable but is where a live NPC
+    # in this exact save state stands (confirmed via probe_walkable and OAM sprite inspection --
+    # this is what actually caused the reported "path blocked at (6, 7)" bug, not an axis error).
+    # A static collision grid has no notion of that NPC, so testing directly off the spawn tile
+    # would be flaky. Sidestep it: first move a few tiles east (test above proves east is exact
+    # and NPC-free), then verify the south leg from there.
+    wrapper, reader = emulator
+    spawn = reader.read_all()
+    spawn_x, spawn_y = _true_xy(spawn)
+
+    setup = execute_tool("navigate_to", {"x": spawn_x + 4, "y": spawn_y}, wrapper, reader, CFG)
+    assert setup["ok"] is True and setup["stopped_early"] is False
+
+    before = reader.read_all()
+    true_x, true_y = _true_xy(before)
+    goal = (true_x, true_y + 2)
+
+    grid = pathfind.load_grids()[(before["map_bank"], before["map_number"])]
+    assert grid.is_walkable(*goal), "test setup: goal must be grid-walkable"
+
+    obs = execute_tool("navigate_to", {"x": goal[0], "y": goal[1]}, wrapper, reader, CFG)
+
+    after_true = _true_xy(reader.read_all())
+    assert obs["ok"] is True
+    assert obs["stopped_early"] is False
+    assert after_true == goal
+    assert after_true[0] == true_x        # x unchanged
+    assert after_true[1] == true_y + 2    # y moved south

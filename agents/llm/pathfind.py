@@ -49,13 +49,19 @@ def load_grids(collision_dir: str = COLLISION_DIR) -> dict:
     return grids
 
 
-def astar(grid: Grid, start_xy: tuple, goal_xy: tuple) -> list | None:
+def astar(grid: Grid, start_xy: tuple, goal_xy: tuple, blocked: frozenset = frozenset()) -> list | None:
     """A* from start_xy to goal_xy (both TRUE (x, y)) over `grid`.
+
+    `blocked` is an extra set of TRUE (x, y) tiles to treat as non-walkable on top of the static
+    grid -- used by the executor (agents/llm/tools._execute_navigate) to route around a tile that
+    the grid calls walkable but that a live NPC/sprite is actually standing on (the static
+    collision grid has no notion of dynamic obstacles; see extract_collision.py's module
+    docstring on scope).
 
     Returns a list of direction strings ("up"/"down"/"left"/"right") to press in order, an empty
     list if start == goal, or None if unreachable (including a wall/out-of-bounds start or goal).
     """
-    if not grid.is_walkable(*start_xy) or not grid.is_walkable(*goal_xy):
+    if not grid.is_walkable(*start_xy) or not grid.is_walkable(*goal_xy) or goal_xy in blocked:
         return None
     if start_xy == goal_xy:
         return []
@@ -84,7 +90,7 @@ def astar(grid: Grid, start_xy: tuple, goal_xy: tuple) -> list | None:
         closed.add(current)
         for direction, (dx, dy) in DIR_DELTA.items():
             nxt = (current[0] + dx, current[1] + dy)
-            if nxt in closed or not grid.is_walkable(*nxt):
+            if nxt in closed or nxt in blocked or not grid.is_walkable(*nxt):
                 continue
             tentative = g + 1
             if tentative < best_g.get(nxt, float("inf")):
@@ -95,14 +101,15 @@ def astar(grid: Grid, start_xy: tuple, goal_xy: tuple) -> list | None:
 
 
 def plan(bank: int, num: int, start_true_xy: tuple, goal_true_xy: tuple,
-         grids: dict | None = None) -> list | None:
+         grids: dict | None = None, blocked: frozenset = frozenset()) -> list | None:
     """Same-map A* plan: (bank, num) select the grid, start/goal are TRUE (x, y).
 
     `grids` lets callers reuse an already-loaded `load_grids()` dict; defaults to a fresh load.
+    `blocked` is forwarded to `astar()` (see its docstring) to route around dynamic obstacles.
     Returns None if the map isn't in the collision set or the target is unreachable.
     """
     grids = grids if grids is not None else load_grids()
     grid = grids.get((bank, num))
     if grid is None:
         return None
-    return astar(grid, start_true_xy, goal_true_xy)
+    return astar(grid, start_true_xy, goal_true_xy, blocked=blocked)
