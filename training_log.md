@@ -2581,3 +2581,14 @@ handling of dynamic obstacles. LLM-4 therefore deviates from the planned minimap
 target model reasoning the model no longer bottlenecks on) to a general executor fallback: when
 plan() fails, take one probe-verified greedy step toward the goal and let the next call re-plan.
 Deviation grounded in the two-run evidence; minimap/scratchpad remain available for LLM-5 if needed.
+
+### LLM-4 — greedy fallback (executor robustness) — verdict (2026-07-08)
+
+Run (`run_1783462465.jsonl`, 1000 steps): wp 2, 4 legs, 7 battles won, 13 tiles. The greedy
+fallback works — Cherrygrove's blocker was recovered in 2 retries (also reproduced offline), and
+early legs were the fastest yet (New Bark 1 step, Route 29 134, Cherrygrove 1). New dominant
+blocker: an NPC/trainer CAMPING the single-corridor tile at Route 30 (5,33) for 200+ turns — the
+fallback exhausts and the note said "try again", so the model retried navigate_to forever instead
+of ENGAGING the person. Offline replay minutes later: tile free, path open (ephemeral-but-long
+camping). LLM-5 (final attempt): the exhausted-fallback note now instructs facing + pressing 'a'
+to clear the person, then re-navigating (tools.py; the last unhandled interaction class).

@@ -366,9 +366,16 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
                 # (4 save/restores), so only run the probe here, never on the happy path above.
                 greedy_fallbacks += 1
                 if greedy_fallbacks > _GREEDY_FALLBACK_LIMIT:
+                    # LLM-5: name the likely cause AND the unblocking action. Trainers/NPCs camping
+                    # the only corridor tile can hold this state for many turns; walking around them
+                    # is impossible, so the model must ENGAGE (press 'a' facing them -> dialogue or
+                    # battle clears the tile) instead of re-calling navigate_to forever (LLM-4 runs
+                    # showed 200+ identical retries at one tile).
                     return {"ok": False,
-                            "note": f"path blocked around ({cur_xy[0]}, {cur_xy[1]}) — a moving "
-                                    f"NPC may be in the way; try again",
+                            "note": f"path blocked around ({cur_xy[0]}, {cur_xy[1]}) — a person is "
+                                    f"probably standing in the way. Face them and press 'a' to "
+                                    f"talk/battle (this clears the path), then call navigate_to "
+                                    f"again",
                             "stopped_early": True}
                 open_dirs = probe_walkable(wrapper, ram_reader, n=cfg.frames_per_press)
                 direction = _greedy_direction(open_dirs, cur_xy, goal)
