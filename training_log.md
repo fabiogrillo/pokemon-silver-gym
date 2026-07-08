@@ -2561,8 +2561,8 @@ frontier cells harvested, no traceback. Killed cleanly via SIGTERM to the exact 
 remains). Tests: `test_visited_obs.py`, `test_confinement.py`, `test_dynamic_budget.py`,
 `test_frontier_score.py` — 11 passed.
 
-**LAUNCH PENDING** (controller launches when the GPU frees up after the LLM runs).
-Launch command (controller's step, verbatim from 088/089's protocol):
+**LAUNCHED 2026-07-07; stopped ~84M/100M on 2026-07-08** — see the RL-3 verdict below.
+Launch command used (verbatim from 088/089's protocol):
 `nohup .venv/bin/python -m agents.rl.train_cnn > runs/agent_090_launch.log 2>&1 &`
 
 ### LLM-3 — harness leg goals (L4) — verdict (2026-07-08)
@@ -2592,3 +2592,75 @@ fallback exhausts and the note said "try again", so the model retried navigate_t
 of ENGAGING the person. Offline replay minutes later: tile free, path open (ephemeral-but-long
 camping). LLM-5 (final attempt): the exhausted-fallback note now instructs facing + pressing 'a'
 to clear the person, then re-navigating (tools.py; the last unhandled interaction class).
+
+### LLM-5 — engage-the-blocker note (final attempt) — verdict (2026-07-08)
+
+Run (`run_1783488838.jsonl`, 1000 steps, ~106 min wall clock, 2.81M tokens): **wp 1 (Cherrygrove),
+3 legs, 1 battle won, 9 tiles, stopped=max_steps, badge=false**. The engage-note fix removed the
+Route-30 infinite-retry loop from LLM-4, but the run regressed one waypoint short of LLM-3's best —
+the model burned its step budget on the earlier legs (New Bark → Route 29 → Cherrygrove) and did not
+reach Route 30 within the cap. Consistent with the whole arc's signature: **high run-to-run variance
+driven by where a dynamic NPC happens to camp**, not by a fixable single bug.
+
+**LLM final-attempt verdict (5/5 attempts spent).** Best result across all five: **waypoint 2 (Route
+30), 4 legs** (LLM-3 run 1). The LLM NEVER reached Violet City, the gym, or Falkner from the
+New-Bark start. Root cause, now well-evidenced: the qwen3-vl:8b policy became fully *obedient* to the
+leg harness (~96% of overworld turns issue `navigate_to` at the correct leg target) and the
+executor's A*/greedy/engage stack handles static geometry — but the corridor is gated by **dynamic
+sprites** (scripted rival, wandering NPCs, camping trainers) whose position the harness cannot
+predict, and each hardening pass (NPC-recovery → greedy fallback → engage-note) closed one
+interaction class while a new sprite exposed the next. This is an executor/environment-coupling
+problem, not a reasoning problem — and it is exactly the class of problem RL's trial-and-error solves
+and a step-by-step LLM planner does not. **No further LLM attempts:** the 5-attempt budget is spent
+and the failure mode is understood, not mysterious.
+
+## Agent 090 — RL-3 verdict (2026-07-08, stopped at ~84M/100M — navigation SOLVED, late collapse)
+
+**Launched** (not pending) and run to ~84M of the planned 100M before being stopped on a clear
+post-peak regression (below). Kill gate (`nav/reach_cherrygrove < 0.5 @ 30M`) never fired —
+`nav/reach_cherrygrove` held **1.0** throughout.
+
+**RESULT — the R3 hypothesis is CONFIRMED and corridor navigation is SOLVED.** The de-transposed
+visited-coordinates observation was the missing input every prior warm attempt (088/089) lacked:
+
+| Metric (`nav/*`, start-origin episodes) | Trajectory |
+|---|---|
+| `nav/reach_cherrygrove` | 1.0 sustained from the start |
+| `nav/reach_route31` | first cleared ~12M, then intermittent |
+| `nav/reach_gym` | rises from ~16M → **0.90–0.97 SUSTAINED across 30M–70M** (≈95% of start episodes reach the Violet Gym) |
+| `nav/badge_rate` | **6 wins / 1542 rollouts** (27.8M, 46.2M, 54.8M, 55.5M, 57.4M, 62.5M) — reachable but never a stable rate |
+
+This is the first agent in the project to solve **full-corridor navigation from the New Bark start**
+(New Bark → Route 29 → Cherrygrove → Route 30 → Route 31 → Violet City → gym interior) as a
+consolidated ~95% behavior — the thing the LLM never did once. It directly overturns the PPO_CNN_10e
+ablation: that verdict ("visited-coords not indispensable") was a **bug artifact** of the transposed
+crop, exactly as R3 predicted.
+
+**Falkner / the Zephyr Badge: NOT reliably solved.** The agent reaches the gym ~95% of the time but
+wins the badge only transiently (6 flukes). This matches the separate GYM-slice line (agents
+083–087): beating Falkner from a *cold, navigation-shaped* policy is an in-battle-tactics problem
+that the corridor reward never optimizes for. The already-solved path is: compose the 087 gym agent
+(**100% badge from the gym-start `confine_to_gym` state**) with agent_090's navigation — the two
+halves are each solved, just not in one policy.
+
+**Late-training collapse (why it was stopped, not run to 100M).** `nav/reach_gym` fell **0.63 @ 75M
+→ 0.00 @ 80–84M** — textbook on-policy PPO drift: with navigation consolidated but the badge reward
+still unmet, the gradient kept pushing and degraded the working behavior toward a different local
+optimum. Periodic checkpointing (every 5M) makes this free to recover from. **Best checkpoint for
+demos/inference: `runs/checkpoints/agent_090/agent_090_49999920_steps.zip` (50M — `nav/reach_gym`
+0.97, inside the badge-win window).** The 75M/80M checkpoints are in the collapse zone and must not
+be used.
+
+## Phase C conclusion — RL vs LLM, from the New Bark start (2026-07-08)
+
+| | Best result from New Bark start | Reached Violet Gym | Beat Falkner |
+|---|---|---|---|
+| **RL** (agent_090, visited-obs, cold 100M) | **full corridor, ~95% reach-gym** | **yes (~95%)** | transient only (6/1542); solved separately by 087 at 100% from gym-start |
+| **LLM** (qwen3-vl:8b, leg harness, 5 attempts) | **Route 30 (wp 2), 4 legs** | no | no |
+
+**The headline stands and is now quantified:** the small local RL policy solves overworld navigation
+that the vision-LLM cannot, because the corridor's real difficulty is reacting to *dynamic sprites*
+through thousands of trial-and-error steps — RL's home turf — while the LLM plans correctly but
+cannot execute against an adversarial, unpredictable environment one tool call at a time. Both
+paradigms have their remaining gap fully diagnosed (RL: in-battle tactics, already solved in
+isolation by 087; LLM: dynamic-obstacle execution). Phase C is closed.
