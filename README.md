@@ -15,7 +15,7 @@ Everything is written by hand (Copilot for autocomplete only) to maximize learni
 > from `saves/violet_city_gym.state`). 🔬 The **LLM agent** (vision + ReAct + tool-calling) is built and
 > tested; its finding is the crux of the comparison — **it wins battles but cannot navigate the gym to
 > Falkner** (fixates / heads for the exit), where the RL policy scores 100%. The full corridor remains an
-> open research problem (see `training_log.md`).
+> open research problem (see `EXPERIMENTS.md`).
 
 ---
 
@@ -108,7 +108,7 @@ Leader Falkner for the **Zephyr Badge**. Tracked sub-milestones: tiles explored,
 ## RL agent — PPO
 
 - Algorithm: PPO (Stable Baselines3), **CnnPolicy** + `VecFrameStack(4)`. The earlier MlpPolicy
-  line was superseded — full rationale and run history in `training_log.md`.
+  line was superseded — the rationale is in `EXPERIMENTS.md`.
 - Observation: Dict — downsampled 72×80 RGB screen + an 11-float state vector (HP, levels,
   battle, story flags) so the policy can read state pixels don't show.
 - Reward: dense coordinate exploration + story events (egg, badge) + battle wins, all RAM-driven
@@ -118,7 +118,7 @@ Leader Falkner for the **Zephyr Badge**. Tracked sub-milestones: tiles explored,
   (inside the gym, Totodile lv15). The decisive fix was *structural*, not reward-tuning: a
   `CONFINE_TO_GYM` flag ends the episode if the agent leaves the gym map, removing the
   "wander out and wild-grind" basin that capped earlier runs at ~40%. The full arc
-  (10% → 40% → 100%) and the lesson are in `training_log.md` (agents 083–087).
+  (10% → 40% → 100%) and the lesson are in `EXPERIMENTS.md`.
 - **Full corridor** (New Bark → Violet) remains an open exploration problem — the stretch goal.
 
 ## LLM agent — ReAct (local vision+text)
@@ -212,7 +212,7 @@ docker run --rm \
 - [x] PPO training pipeline (SubprocVecEnv + TensorBoard + checkpoints)
 - [x] Evaluation tooling (per-episode JSONL, GIF, live `--watch`)
 - [x] Map-visualization overlay (trajectory + heatmap, PNG + GIF) and Dockerized playback demo
-- [x] **RL gym slice solved** — `agent_087`, 100% badge from `violet_city_gym.state` (`training_log.md`)
+- [x] **RL gym slice solved** — `agent_087`, 100% badge from `violet_city_gym.state` (`EXPERIMENTS.md`)
 - [x] **LLM agent** — vision + ReAct + tool-calling over Ollama (`qwen3-vl:8b`), 21 tests green
 - [~] LLM gym slice: **wins battles but does not navigate to Falkner** — the RL-vs-LLM finding (documented)
 - [x] Evaluation/comparison suite (RL vs LLM) — `evaluate_llm.py` + `comparison.py` (24 tests green)
