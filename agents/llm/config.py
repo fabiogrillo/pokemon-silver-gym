@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 
 # Kept short deliberately: qwen3-vl:8b always thinks and the longer this prompt is, the more it
 # thinks before answering, which raises the empty-response rate (thinking-only turns with no
@@ -26,11 +27,14 @@ class LLMConfig:
     """
     Configuration class for LLM agents.
     """
-    model: str = "qwen3-vl:8b" 
-    base_url: str = "http://localhost:11434/v1"
-    api_key: str = "ollama"
-    rom_path: str = "pokemon_rom.gbc"
-    state_path: str = "saves/egg_delivered_clean.state"  # start of the New Bark -> Violet corridor
+    # Connection/model/paths default to a local Ollama on the standard port, but each can be
+    # overridden by an environment variable so the same code runs under docker-compose (where the
+    # model server is a separate service reachable at http://ollama:11434).
+    model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "qwen3-vl:8b"))
+    base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"))
+    api_key: str = field(default_factory=lambda: os.getenv("LLM_API_KEY", "ollama"))
+    rom_path: str = field(default_factory=lambda: os.getenv("ROM_PATH", "pokemon_rom.gbc"))
+    state_path: str = field(default_factory=lambda: os.getenv("LLM_STATE", "saves/egg_delivered_clean.state"))  # corridor start
     max_steps: int = 1000  # enough headroom that the cap measures how far the agent gets, not
                            # how quickly it stalls
     token_budget: int = 4_000_000

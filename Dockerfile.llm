@@ -1,0 +1,37 @@
+# The LLM agent: run one episode of the tool-calling vision-LLM agent against the corridor task.
+# Model inference happens on a separate Ollama server (see docker-compose.yml); this image only runs
+# the emulator + the ReAct loop and talks to Ollama over HTTP. CPU-only. The ROM is mounted at runtime
+# (it is not distributable), and LLM_BASE_URL points the client at the Ollama service.
+#
+# Usually run via `docker compose up llm-agent`. Standalone:
+#   docker build -f Dockerfile.llm -t silver-llm-agent .
+#   docker run --rm -e LLM_BASE_URL=http://host.docker.internal:11434/v1 \
+#     -v "$PWD/pokemon_silver.gbc:/app/pokemon_rom.gbc" silver-llm-agent
+#
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app \
+    LLM_BASE_URL=http://ollama:11434/v1 \
+    LLM_MODEL=qwen3-vl:8b \
+    LLM_STATE=/app/saves/egg_delivered_clean.state
+
+# SDL2 + GL runtime libs for PyBoy (headless, but the bundled SDL2 still loads these).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libsdl2-2.0-0 libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-llm.txt .
+RUN pip install -r requirements-llm.txt
+
+# Application code + collision grids + save states. The ROM is mounted at runtime (not bundled).
+COPY agents/ agents/
+COPY env/ env/
+COPY saves/ saves/
+COPY assets/ assets/
+
+ENTRYPOINT ["python", "-m", "agents.llm.run"]
+CMD []

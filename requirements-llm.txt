@@ -1,0 +1,10 @@
+# Runtime deps for the LLM agent (agents/llm/run.py). Model inference runs on the Ollama server
+# (a separate process/container), so there is NO torch or stable-baselines3 here — just the emulator,
+# the OpenAI-compatible client, and image handling.
+pyboy==2.7.1
+openai==2.36.0
+numpy==2.4.4
+pillow==12.2.0
+imageio==2.37.3
+PySDL2==0.9.17
+pysdl2-dll==2.32.0

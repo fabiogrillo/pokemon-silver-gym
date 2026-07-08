@@ -1,0 +1,74 @@
+# Run both agents against Pokemon Silver.
+#
+# Bring your own legal ROM as ./pokemon_rom.gbc (it is never bundled). Then:
+#
+#   # RL agent — beat Falkner from inside the gym (CPU-only, no model server needed):
+#   docker compose run --rm rl-agent
+#
+#   # LLM agent — walk the New Bark -> Violet corridor with a local vision-LLM.
+#   # First boot the model server and pull the model (a few GB, one time):
+#   docker compose up -d ollama
+#   docker compose run --rm ollama-pull
+#   docker compose run --rm llm-agent
+#
+# The LLM is far faster with a GPU: uncomment the `deploy` block under `ollama` if you have the
+# NVIDIA container toolkit installed. It runs on CPU without it, just slowly.
+
+services:
+  # Pretrained RL agent playing the gym slice. The agent_087 checkpoint is baked into the image.
+  rl-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./pokemon_rom.gbc:/app/pokemon_rom.gbc:ro
+      - ./runs:/app/runs
+
+  # Local model server for the LLM agent.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Uncomment to use an NVIDIA GPU (needs the NVIDIA container toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # One-shot: pull the vision-LLM into the ollama volume. Run once before llm-agent.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: ollama:11434
+    entrypoint: ["ollama", "pull", "qwen3-vl:8b"]
+
+  # The LLM agent: talks to the ollama service over HTTP, plays the corridor task.
+  llm-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.llm
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      LLM_BASE_URL: http://ollama:11434/v1
+      LLM_MODEL: qwen3-vl:8b
+    volumes:
+      - ./pokemon_rom.gbc:/app/pokemon_rom.gbc:ro
+      - ./runs:/app/runs
+
+volumes:
+  ollama-models:

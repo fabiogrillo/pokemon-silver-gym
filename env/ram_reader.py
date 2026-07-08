@@ -36,7 +36,7 @@ class RAMReader:
 
         # ── Party Pokemon levels (all 6 slots)
         # Structure: wPartyMon1 base = 0xDA2A, level offset = +0x1F (empirically verified: 0xDA2A+0x1F=0xDA49=5 for Totodile at start)
-        # Struct size = 0x30 bytes per slot (Gen 2 standard — VERIFY empirically with test_enemy_level.py)
+        # Struct size = 0x30 bytes per slot (Gen 2 standard — verified empirically)
         # Slots i >= party_count are zeroed to avoid stale RAM values from previous game sessions
         PARTY_LEVEL_BASE  = 0xDA49  # Slot 1 level — empirically verified ✓
         PARTY_STRUCT_SIZE = 0x30    # 48 bytes per party slot — calculated, needs verification
@@ -56,7 +56,7 @@ class RAMReader:
         flag_rival_cherrygrove = self.pyboy.memory[0xD88E]
         # 0xD7BA bit 7 (0x80): set to 1 during Elm lab sequence (egg/police/pokeball)
         flag_elm_mr_pokemon    = self.pyboy.memory[0xD7BA]
-        # 0xD836: Violet City Gym trainer beaten flags (empirically verified via test_enemy_level.py)
+        # 0xD836: Violet City Gym trainer beaten flags (empirically verified)
         # bit 4 (0x10): RISE after Trainer 1 beaten (flag #1020 = EVENT_BEAT_BIRD_KEEPER_ABE)
         # bit 3 (0x08): RISE after Trainer 2 beaten (flag #1019 = EVENT_BEAT_BIRD_KEEPER_ROD)
         flag_violet_gym        = self.pyboy.memory[0xD836]
