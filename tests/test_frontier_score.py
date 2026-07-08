@@ -1,11 +1,11 @@
 """
-Unit tests for env.frontier_archive.frontier_score — waypoint-ordinal re-scoring (R4, technique
-from docs/superpowers/specs/2026-07-06-final-attempt-findings.md §2).
+Unit tests for env.frontier_archive.frontier_score — the waypoint-ordinal ranking within the
+delivered tier.
 
 Pure logic, NO PyBoy required. Validates:
-  - delivered cells now rank by the CELL'S OWN max_waypoint ordinal (leading-edge sampling), so
+  - delivered cells rank by the CELL'S OWN max_waypoint ordinal (leading-edge sampling), so
     gym-adjacent cells outrank New Bark / Cherrygrove cells instead of being flat-tied at 1.0
-  - the carry (2.0) and pre-egg (0.0) tiers — the agent_060/061 flat-tier fixes — are untouched
+  - the carry (2.0) and pre-egg (0.0) flat tiers are untouched
 
 Run:
     .venv/bin/python -m tests.test_frontier_score

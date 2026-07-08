@@ -1,5 +1,5 @@
 """
-CnnPolicy training entry point — PPO_19 and beyond.
+CnnPolicy training entry point.
 
 Differences from train_mlp.py:
   - Imports PokemonEnvCNN (Dict obs: image 72x80x4 uint8 [RGB + visited mask] + 11-float vector)
@@ -50,7 +50,7 @@ class InfoLoggerCallback(BaseCallback):
     """
 
     WAYPOINT_NAMES = ["cherrygrove", "route30_gate", "route31", "violet", "gym"]
-    # Episode-end story/combat progress (PPO_CNN_10 go/no-go gate metrics):
+    # Episode-end story/combat progress (go/no-go gate metrics):
     #   *_rate  = fraction of finished episodes where the bool flag was set
     #   *_mean  = mean count over finished episodes
     EP_RATE_KEYS  = ["egg_received", "egg_delivered", "zephyr"]
@@ -63,9 +63,9 @@ class InfoLoggerCallback(BaseCallback):
                       "visited_tiles", "hp_ratio", "in_battle"]
         self._buffers = {k: [] for k in self._keys}
         # Episode-end stats split by origin: "nav" = true start.state episodes (the SUCCESS GATE),
-        # "front" = Go-Explore frontier-reset episodes (agent_059), which begin deep along the
-        # policy's own trajectory. Without the split, frontier episodes (which start past the
-        # waypoints) would inflate the start-state metrics and hide regressions (the CNN_7 lesson).
+        # "front" = Go-Explore frontier-reset episodes, which begin deep along the policy's own
+        # trajectory. Without the split, frontier episodes (which start past the waypoints) would
+        # inflate the start-state metrics and hide regressions.
         self._ep_waypoints = {"nav": [], "front": []}
         self._ep_flags = {p: {k: [] for k in self.EP_RATE_KEYS + self.EP_MEAN_KEYS}
                           for p in ("nav", "front")}
@@ -116,8 +116,8 @@ class InfoLoggerCallback(BaseCallback):
 class EntCoefScheduleCallback(BaseCallback):
     """Linearly anneal ent_coef `start`→`end` over `anneal_steps`, then hold `end`.
 
-    agent_056 lever: a FIXED low ent_coef (0.01) can't learn new long-range behavior (delivery
-    A-press, southward backtrack), but a FIXED high one (0.03, agent_052) never locks segment 1.
+    A fixed low ent_coef (0.01) can't learn new long-range behavior (delivery A-press, southward
+    backtrack), but a fixed high one (0.03) never locks in the first segment.
     The schedule explores high early, then commits low. SB3 reads model.ent_coef as a float each
     train() call, so the per-rollout mutation applies on the next update (lr supports schedules
     natively; ent_coef does not — hence this callback)."""
@@ -142,7 +142,7 @@ def make_env(rank, state_path, frontier_root=None, p_frontier=0.0):
             gif_dir=None,  # no GIFs during training (saves disk space and overhead)
             gif_prefix=config.RUN_NAME,  # ensures GIF filenames carry the run identity
             # Every worker points its FrontierArchive at the SAME dir → frontier cells are shared
-            # across SubprocVecEnv processes via the filesystem (no IPC). agent_060: p_frontier is
+            # across SubprocVecEnv processes via the filesystem (no IPC). p_frontier is
             # assigned PER ENV (dedicated frontier envs) — see __main__ — not a global flag.
             frontier_root=frontier_root,
             p_frontier=p_frontier if frontier_root else 0.0,
@@ -150,13 +150,13 @@ def make_env(rank, state_path, frontier_root=None, p_frontier=0.0):
             frontier_cell_k=config.FRONTIER_CELL_K,
             frontier_epsilon=config.FRONTIER_EPSILON,
             frontier_max_steps=getattr(config, "FRONTIER_MAX_STEPS", 2**16),
-            egg_marker=getattr(config, "EGG_MARKER", False),  # agent_066: egg-state visual marker
-            exploration_scale=getattr(config, "EXPLORATION_SCALE", 1.0),  # agent_071: 0 in Phase-2 gym runs
-            confine_to_gym=getattr(config, "CONFINE_TO_GYM", False),  # agent_087: end episode on leaving GYM_MAP
-            confine_to_corridor=getattr(config, "CONFINE_TO_CORRIDOR", False),  # R1: end episode off-corridor
-            dynamic_episode_budget=getattr(config, "DYNAMIC_EPISODE_BUDGET", False),  # R2b: earned episode budget
-            dyn_budget_base=getattr(config, "DYN_BUDGET_BASE", 16384),  # R2b override (R2-softening, agent_089 post-mortem)
-            visited_obs=getattr(config, "VISITED_OBS", False),  # R3: gated visited-coordinates Dict-obs key
+            egg_marker=getattr(config, "EGG_MARKER", False),  # egg-state visual marker
+            exploration_scale=getattr(config, "EXPLORATION_SCALE", 1.0),
+            confine_to_gym=getattr(config, "CONFINE_TO_GYM", False),  # end episode on leaving the gym map
+            confine_to_corridor=getattr(config, "CONFINE_TO_CORRIDOR", False),  # end episode off-corridor
+            dynamic_episode_budget=getattr(config, "DYNAMIC_EPISODE_BUDGET", False),  # earned episode budget
+            dyn_budget_base=getattr(config, "DYN_BUDGET_BASE", 16384),  # base cap for the dynamic budget
+            visited_obs=getattr(config, "VISITED_OBS", False),  # gated visited-coordinates Dict-obs key
         )
         env.reset(seed=rank)
         return env
@@ -168,14 +168,14 @@ if __name__ == "__main__":
     assert sum(n for _, n in config.CURRICULUM_STATES_CNN) == config.N_ENVS_CNN, \
         f"CURRICULUM_STATES_CNN counts must sum to N_ENVS_CNN ({config.N_ENVS_CNN})"
     # Fail fast on a missing save state — PyBoyWrapper only WARNS and silently starts a fresh game,
-    # which would train from the wrong scene (e.g. agent_076 needs saves/egg_delivered_clean.state,
+    # which would train from the wrong scene (e.g. the corridor run needs saves/egg_delivered_clean.state,
     # created manually via `python tests/save_state.py egg_delivered_clean before_elm_delivery`).
     for state_path, _ in config.CURRICULUM_STATES_CNN:
         if not os.path.exists(state_path):
             sys.exit(f"[init] Missing save state: {state_path}\n"
                      f"       Create it first (see README / Part A) before training.")
 
-    # agent_059: prepare the shared frontier archive dir (one per run). Clear it at startup so a run
+    # Prepare the shared frontier archive dir (one per run). Clear it at startup so a run
     # never samples stale cells left by a DIFFERENT policy (those would be off-distribution).
     frontier_root = None
     if getattr(config, "FRONTIER_ENABLED", False):
@@ -183,7 +183,7 @@ if __name__ == "__main__":
         frontier_root = os.path.join(config.FRONTIER_ROOT, config.RUN_NAME)
         shutil.rmtree(frontier_root, ignore_errors=True)
         os.makedirs(frontier_root, exist_ok=True)
-        # agent_067: optionally SEED the archive with another run's carry-state save-states, to bootstrap
+        # Optionally SEED the archive with another run's save-states, to bootstrap
         # a cold start that can't reach those states on its own (the pure-start-cold wall, 066).
         seed_from = getattr(config, "FRONTIER_SEED_FROM", None)
         if seed_from and os.path.isdir(seed_from):
@@ -197,7 +197,7 @@ if __name__ == "__main__":
               f"(frontier_envs={config.FRONTIER_N_ENVS}/{config.N_ENVS_CNN}, p={config.FRONTIER_P}, "
               f"max_cells={config.FRONTIER_MAX_CELLS}, k={config.FRONTIER_CELL_K})")
 
-    # agent_060: DEDICATE the last FRONTIER_N_ENVS envs to frontier resets (p=FRONTIER_P); the rest
+    # DEDICATE the last FRONTIER_N_ENVS envs to frontier resets (p=FRONTIER_P); the rest
     # are PURE start (p=0). 059 (p=0.5 on ALL 12 envs) let the southward frontier gradient suppress
     # the NORTHWARD egg-pickup excursion → nav/egg_received cratered 1.0→0 (pickup is the foundation;
     # 0 pickup structurally caps delivery at 0). Keeping a majority of envs pure-start guarantees the
@@ -218,7 +218,7 @@ if __name__ == "__main__":
     vec_env = VecMonitor(vec_env)
     vec_env = VecFrameStack(vec_env, n_stack=4)           # image (72,80,4) → (72,80,16)
     vec_env = VecTransposeImage(vec_env)                  # → (16,72,80) for PyTorch
-    # norm_reward=False (PPO_CNN_5): rewards are already single-digit (×REWARD_SCALE), so
+    # norm_reward=False: rewards are already single-digit (x REWARD_SCALE), so
     # normalization is unnecessary — and was harmful before, when rare +1000 spikes dominated the
     # running-std and crushed the dense exploration signal. Matches Whidden V2 (raw, well-scaled).
     vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=False,
@@ -265,13 +265,13 @@ if __name__ == "__main__":
     callbacks = [
         CheckpointCallback(
             # SB3 counts save_freq in callback-calls (= timesteps / n_envs), so divide to get the
-            # intended interval in TIMESTEPS. (CNN_5 bug: raw 5M × 12 envs = 60M never fired.)
+            # intended interval in TIMESTEPS. (A subtle bug: raw 5M x 12 envs = 60M never fired.)
             save_freq=max(config.CHECKPOINT_FREQ_CNN // config.N_ENVS_CNN, 1),
             save_path=checkpoint_dir,
             name_prefix=config.RUN_NAME,
         ),
         InfoLoggerCallback(),
-        # agent_056: entropy schedule (explore high → commit low). Overrides the static
+        # entropy schedule (explore high -> commit low). Overrides the static
         # ENT_COEF_CNN/custom_objects value from rollout 1 onward.
         EntCoefScheduleCallback(
             start=config.ENT_COEF_CNN,

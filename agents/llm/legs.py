@@ -1,9 +1,8 @@
-"""L4: harness-owned corridor leg checklist (LLM-3, docs/superpowers/specs/2026-07-06-final-attempt
--findings.md's L4). The HARNESS (not the model) tracks progress along the egg-delivered -> Falkner
-corridor as an ordered list of "legs" (one per map), each with a single target tile to reach. Every
-turn's prompt carries only the current leg's goal -- this is the fix for LLM-2's observed failure
-mode (50/56 navigate_to calls perseverated on one mid-town coordinate; the model can adopt the tool
-but not pick strategic targets).
+"""Harness-owned corridor leg checklist. The harness (not the model) tracks progress along the
+egg-delivered -> Falkner corridor as an ordered list of "legs" (one per map), each with a single
+target tile to reach. Every turn's prompt carries only the current leg's goal. This keeps the model
+from perseverating on one coordinate: it adopts the navigate_to tool well but does not pick good
+strategic targets on its own.
 
 Grid convention (matches agents/llm/pathfind.py and extract_collision.py): `walkable[y][x]`,
 row-major, TRUE axes (x grows EAST, y grows SOUTH). Any live-RAM position fed into this module must

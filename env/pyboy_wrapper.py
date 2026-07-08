@@ -39,14 +39,14 @@ class PyBoyWrapper:
         return self.pyboy.screen.ndarray
 
     def save_state_bytes(self):
-        """Serialize full emulator state to bytes (Go-Explore frontier harvest, agent_059).
+        """Serialize full emulator state to bytes (for the Go-Explore frontier harvest).
         ~200KB/state; load_state round-trips RAM exactly via BytesIO."""
         buf = io.BytesIO()
         self.pyboy.save_state(buf)
         return buf.getvalue()
 
     def reset_from_bytes(self, data):
-        """Reset to a frontier save-state from the policy's own trajectory (agent_059),
+        """Reset to a frontier save-state from the policy's own trajectory,
         instead of the fixed state file. Same stabilize-tick as reset()."""
         self.pyboy.load_state(io.BytesIO(data))
         self.pyboy.tick(count=120)

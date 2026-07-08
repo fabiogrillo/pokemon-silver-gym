@@ -3,12 +3,12 @@ Evaluation script for CnnPolicy models trained via train_cnn.py.
 
 Replicates the training pipeline (VecFrameStack + VecTransposeImage) because the
 CNN expects (12, 72, 80) uint8 input — 4 stacked frames × 3 RGB channels, transposed
-to channels-first for PyTorch. VecNormalize is intentionally omitted: in PPO_CNN_*
+to channels-first for PyTorch. VecNormalize is intentionally omitted: in this project
 we only normalize rewards (norm_obs=False), and the policy network operates on
 unnormalized pixel obs identically in eval and training.
 
 Usage:
-    python -m agents.rl.evaluate_cnn --model runs/checkpoints/PPO_CNN_2/PPO_CNN_2_20000000_steps.zip
+    python -m agents.rl.evaluate_cnn --model runs/checkpoints/agent_090/agent_090_50000000_steps.zip
     python -m agents.rl.evaluate_cnn --model <path> --episodes 20 --gif --deterministic
     python -m agents.rl.evaluate_cnn --model <path> --state saves/violet_city.state
 """
@@ -200,7 +200,7 @@ def evaluate(model_path: str, n_episodes: int, state_path: str,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, required=True,
-                        help="Path to the saved .zip model (e.g. runs/checkpoints/PPO_CNN_2/PPO_CNN_2_20000000_steps.zip)")
+                        help="Path to the saved .zip model (e.g. runs/checkpoints/agent_090/agent_090_50000000_steps.zip)")
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--state", type=str, default=config.STATE_PATH,
                         help=f"Save state to evaluate from (default: {config.STATE_PATH})")

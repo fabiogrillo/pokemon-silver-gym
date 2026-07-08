@@ -14,8 +14,8 @@ duration. Clip length on screen ≈ (max_steps * 0.2667 / speed) seconds — so 
 
 Usage:
   .venv/bin/python -m agents.rl.make_gif \
-      --model runs/checkpoints/agent_053/agent_053_79999872_steps.zip \
-      --state saves/start.state --max-steps 4000 --speed 2 --out runs/progress_gifs/agent_053.gif
+      --model runs/checkpoints/agent_090/agent_090_50000000_steps.zip \
+      --state saves/start.state --max-steps 4000 --speed 2 --out runs/progress_gifs/agent_090.gif
 """
 
 import argparse

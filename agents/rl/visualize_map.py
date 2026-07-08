@@ -15,12 +15,12 @@ generated (so the tool runs before the real map asset is added).
 
 Usage:
   python -m agents.rl.visualize_map \
-      --model runs/checkpoints/agent_076/agent_076_5000000_steps.zip \
-      --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_076
+      --model runs/checkpoints/agent_090/agent_090_50000000_steps.zip \
+      --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_090
 
   # progression montage: one PNG per checkpoint in a run directory + a combined GIF
-  python -m agents.rl.visualize_map --all-checkpoints runs/checkpoints/agent_076 \
-      --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_076
+  python -m agents.rl.visualize_map --all-checkpoints runs/checkpoints/agent_090 \
+      --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_090
 """
 
 import argparse

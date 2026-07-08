@@ -30,11 +30,9 @@ class LLMConfig:
     base_url: str = "http://localhost:11434/v1"
     api_key: str = "ollama"
     rom_path: str = "pokemon_rom.gbc"
-    state_path: str = "saves/egg_delivered_clean.state"  # corridor task (final attempt); the gym slice used saves/violet_city_gym.state
-    max_steps: int = 1000  # LLM-3 run 2: 500 was sized for a stall-bound agent; run 1 (trace
-                           # run_1783429465) was still making corridor progress (wp 2, Route 30)
-                           # when it hit the cap, so the budget now measures capability, not
-                           # patience. Change documented in training_log.md's LLM-3 entry.
+    state_path: str = "saves/egg_delivered_clean.state"  # start of the New Bark -> Violet corridor
+    max_steps: int = 1000  # enough headroom that the cap measures how far the agent gets, not
+                           # how quickly it stalls
     token_budget: int = 4_000_000
     temperature: float = 0.3
     request_timeout: int = 120
@@ -45,7 +43,7 @@ class LLMConfig:
     stuck_radius: int = 1
     send_image: bool = True
     log_dir: str = "runs/llm_logs"
-    confine_to_home_map: bool = False  # gym-slice harness guardrail (June arc); MUST be False for the corridor task
-    leg_mode: bool = True  # LLM-3: harness-owned goals via agents/llm/legs.LegTracker (per-turn note
-                            # names the current corridor leg's target). False = LLM-2's free-form
-                            # prompting (the model itself picks navigate_to targets).
+    confine_to_home_map: bool = False  # keep the agent on its starting map; must be False for the corridor
+    leg_mode: bool = True  # harness-owned goals via agents/llm/legs.LegTracker (each turn's note names
+                            # the current corridor leg's target). False = the model picks its own
+                            # navigate_to targets.

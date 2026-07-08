@@ -12,21 +12,14 @@ from .rewards import (
 )
 from .frontier_archive import FrontierArchive, cell_key, frontier_score
 
-MAX_STEPS = 2**16  # 65536 — agent_088: REVERTED to agent_079's episode length. agent_082 bumped this to
-                   # 2**17 (131072) as an isolated warm-start test (does the Route-30-capable policy reach
-                   # Route 31 with more steps/episode?), but that run was never resolved — the project
-                   # pivoted to the gym slice (083) before a result was logged in training_log.md. RL-1 is
-                   # a faithful revert to the 079 recipe (+ CONFINE_TO_CORRIDOR), so this untested variable
-                   # is reverted too rather than silently carried forward. (prior 131072, agent_082, abandoned.)
-                   # The "65k hurts" diagnosis (10c-10d) was confounded by the visited-mask (the real
-                   # culprit, per the 10e ablation) — not by MAX_STEPS itself.
+MAX_STEPS = 2**16  # 65536 — hard per-episode step cap (the dynamic budget grows up to this ceiling).
 
 # Ordered route waypoints (ordinal = index + 1) — drives per-episode navigation progress logging
 # to TensorBoard, independent of reward. 0 = start/New Bark … 5 = Violet Gym.
 # Ordinal 3 (ROUTE_31, post-gate) = the agent has CLEARED the two-trainer story gate.
 WAYPOINT_ORDER = [CHERRYGROVE, ROUTE_30_GATE, ROUTE_31, VIOLET_CITY, GYM_MAP]
 
-DYN_BUDGET_BASE = 2**14  # 16384 — R2b: dynamic episode budget base cap (earned-episode-length trick,
+DYN_BUDGET_BASE = 2**14  # 16384 — dynamic episode budget base cap (earned-episode-length trick,
                          # Pokémon-Red paper). Start/curriculum episodes begin capped at this short
                          # budget and only earn more steps (up to MAX_STEPS) by reaching new corridor
                          # waypoints, so aimless wandering is truncated fast while genuine progress is
@@ -44,7 +37,7 @@ class PokemonEnvCNN(gym.Env):
                  visited_obs=False, dyn_budget_base=DYN_BUDGET_BASE):
         """PyBoy-backed Gymnasium env with Dict obs (RGB image + state vector) for CnnPolicy.
 
-        Go-Explore frontier reset (agent_059): if `frontier_root` is set, a fraction `p_frontier` of
+        Go-Explore frontier reset: if `frontier_root` is set, a fraction `p_frontier` of
         resets load a save-state sampled from the shared on-disk archive (states harvested from the
         policy's OWN trajectory) instead of `state_path`. All envs share the same archive dir, so a
         cell found by one worker seeds resets in every worker. No foreign save-state is introduced
@@ -62,14 +55,12 @@ class PokemonEnvCNN(gym.Env):
         self.gif_frames = []            # buffer for current episode's frames
 
         self.action_space = ACTION_SPACE
-        # Dict obs: RGB screen (→ CNN) + RAM-derived state vector (HP/level/battle/story flags), so
-        # the policy can condition on state pixels don't show (e.g. the Route 30 fork looks IDENTICAL
-        # pre/post egg delivery). PPO_CNN_10e ABLATION: the visited-mask 4th channel was REMOVED — it
-        # was semantic noise on battle/menu screens and blocked the corridor (10d gate fail). RL-3
-        # (final-attempt findings §2/§4, technique R3) re-adds it as a SEPARATE Dict-obs key instead
-        # of a stacked image channel (arXiv:2502.19920 §II-C: keeps battle/menu screens from corrupting
-        # it) — gated by `visited_obs` (default OFF), so the obs space is BIT-IDENTICAL to today unless
-        # explicitly enabled (old checkpoints keep loading). See `_visited_crop`.
+        # Dict obs: RGB screen (-> CNN) + RAM-derived state vector (HP/level/battle/story flags), so
+        # the policy can condition on state pixels don't show (e.g. the Route 30 fork looks identical
+        # pre/post egg delivery). When `visited_obs` is on, a "visited" crop of this episode's tiles is
+        # added as a SEPARATE Dict-obs key rather than a stacked image channel, which keeps battle/menu
+        # screens from corrupting it (arXiv:2502.19920 §II-C). Gated (default OFF), so the obs space is
+        # bit-identical to the default unless enabled. See `_visited_crop`.
         self.observation_space = gym.spaces.Dict({
             "image":  gym.spaces.Box(low=0, high=255, shape=(72, 80, 3), dtype=np.uint8),
             "vector": gym.spaces.Box(low=0.0, high=1.0, shape=(11,), dtype=np.float32),
@@ -93,8 +84,8 @@ class PokemonEnvCNN(gym.Env):
         self.battles_fled = 0
         self.battles_lost = 0
         # True for the run's PRIMARY training state — lets the nav metric measure the true start
-        # distribution, uncontaminated by curriculum envs that begin past the waypoints (PPO_CNN_7).
-        # agent_076: the v2 generalist starts from egg_delivered_clean.state, so it counts as a start
+        # distribution, uncontaminated by curriculum envs that begin past the waypoints.
+        # The generalist starts from egg_delivered_clean.state, so it counts as a start
         # env too (else every episode would log under front/ and nav/reach_* would stay empty).
         START_STATES = ("start.state", "egg_delivered_clean.state")
         self.is_start_env = str(state_path).endswith(START_STATES)
@@ -105,7 +96,7 @@ class PokemonEnvCNN(gym.Env):
         self.RETURN_ORDER = {(26, 1): 1, (26, 3): 2, (24, 3): 3, (24, 4): 4, (24, 5): 5}
         self.return_progress = 0
 
-        # ── Go-Explore frontier reset (agent_059) ──────────────────────────────────────────────
+        # ── Go-Explore frontier reset ───────────────────────────────────────────────────────────
         self._rng = random.Random()
         self.p_frontier = p_frontier
         self.frontier_cell_k = frontier_cell_k
@@ -115,28 +106,20 @@ class PokemonEnvCNN(gym.Env):
             if frontier_root else None
         )
         self._from_frontier = False  # True for episodes RESET from an archived cell (logged as front/)
-        self.frontier_max_steps = frontier_max_steps  # agent_062: frontier episodes use this shorter cap
+        self.frontier_max_steps = frontier_max_steps  # frontier episodes use this shorter cap
         self._max_steps = MAX_STEPS  # per-episode truncation cap (set in reset() per origin)
-        self.egg_marker = egg_marker  # agent_063 egg-state image patch — OFF by default (the warm-marker
-                                      # run failed; teachers 053/062 were trained without it, so keep obs clean)
-        self.exploration_scale = exploration_scale  # agent_071: 0 in Phase-2 gym runs (no wander-out pull)
-        self.confine_to_gym = confine_to_gym  # agent_087: end the episode if the agent leaves GYM_MAP
-                                              # (kills the wander-grind basin that capped 083-086 at ~40%)
-        self.confine_to_corridor = confine_to_corridor  # R1 (final-attempt findings §2): end the episode
-                                              # if the agent leaves CORRIDOR_LEGAL — the structural fix for
-                                              # agent_079's off-path lure (Dark Cave / Sprout Tower episodes
-                                              # died earning nothing; this removes the OPTION instead of
-                                              # relying on reward tweaks). Off by default.
-        self.dynamic_episode_budget = dynamic_episode_budget  # R2b (Pokémon-Red paper trick): earned
-                                              # episode budget — start/curriculum episodes begin capped at
-                                              # dyn_budget_base and grow the cap only when the episode's
-                                              # max waypoint ordinal increases. Frontier-origin episodes are
-                                              # untouched (they keep frontier_max_steps). Off by default.
-        self.dyn_budget_base = dyn_budget_base  # overridable base cap for dynamic_episode_budget (R2b);
-                                              # defaults to the module-level DYN_BUDGET_BASE (16384).
-        self.visited_obs = visited_obs  # R3 (final-attempt findings §2/§4): gate for the "visited" Dict-obs
-                                              # key (see _visited_crop). Off by default — obs space stays
-                                              # BIT-IDENTICAL to today unless explicitly enabled.
+        self.egg_marker = egg_marker  # egg-state image patch — off by default (keeps the obs clean)
+        self.exploration_scale = exploration_scale  # weight on the exploration reward
+        self.confine_to_gym = confine_to_gym  # end the episode if the agent leaves the gym map
+        self.confine_to_corridor = confine_to_corridor  # end the episode if the agent leaves CORRIDOR_LEGAL,
+                                              # so off-path maps stop being places where episodes stall
+        self.dynamic_episode_budget = dynamic_episode_budget  # earned episode budget: start/curriculum
+                                              # episodes begin capped at dyn_budget_base and grow the cap only
+                                              # when the episode's max waypoint ordinal increases. Frontier
+                                              # episodes are untouched (they keep frontier_max_steps).
+        self.dyn_budget_base = dyn_budget_base  # base cap for dynamic_episode_budget (default DYN_BUDGET_BASE)
+        self.visited_obs = visited_obs  # gate for the "visited" Dict-obs key (see _visited_crop). Off by
+                                              # default, keeping the obs space bit-identical to the default.
 
     def _state_vector(self, ram):
         """RAM-derived self-state vector, all in [0,1]. Enemy fields are zeroed OUTSIDE battle because
@@ -172,13 +155,13 @@ class PokemonEnvCNN(gym.Env):
 
     def _visited_crop(self, ram):
         """48x48 uint8 crop: 1 on tiles of the CURRENT map already visited THIS EPISODE, in TRUE
-        (de-transposed) axes, player at center (24,24). Gated by `visited_obs` (R3, final-attempt
-        findings §2/§4) — re-adds the 10e-ablated visited signal as a SEPARATE Dict-obs key.
+        (de-transposed) axes, player at center (24,24). Gated by `visited_obs`.
 
         env/ram_reader.py's local_x/local_y fields are swapped vs their names (local_x holds
         wYCoord, local_y holds wXCoord — frozen there, trained checkpoints depend on those RAM
-        offsets/semantics). This is THE bug the 10e ablation shipped with (drawn transposed). Every
-        geometry consumer must un-swap at its own boundary; canonical reference:
+        offsets/semantics). Getting this crop's axes right is exactly what makes the signal useful:
+        drawn transposed it never tracks the player's real movement. Every geometry consumer must
+        un-swap at its own boundary; canonical reference:
         agents/rl/map_layout.ram_to_image_px. Un-swap here too: true_x = ram['local_y'],
         true_y = ram['local_x'] — so walking true-EAST moves the mark along crop COLUMNS, never rows.
         `self.visited_tiles` entries are stored as (bank, num, ram_local_x, ram_local_y), i.e.
@@ -197,20 +180,18 @@ class PokemonEnvCNN(gym.Env):
                 crop[row, col] = 1
         return crop
 
-    # agent_063: egg-state visual marker. 8x8 px corner patch stamped into the IMAGE encoding the egg
-    # quest state, so the CNN (which dominates the policy) can SEE pre-pickup vs carrying vs delivered.
-    # Root cause of the 059-062 transfer⟺erosion wall: at Cherrygrove the screen looks IDENTICAL whether
-    # the agent has the egg or not, so the CNN can't separate "go N to pick up" from "go S to deliver" —
-    # the egg bit in the obs VECTOR was too weak. A colored patch is trivially CNN-detectable. Shape
-    # stays (72,80,3) → 053's checkpoint still warm-loads (the policy learns to attend to the patch).
+    # Optional egg-state visual marker: an 8x8 px corner patch stamped into the image encoding the egg
+    # quest state (none / carrying / delivered), so the CNN can distinguish pre-pickup from carrying at
+    # tiles where the screen looks identical either way. The egg bit in the state vector alone is a weak
+    # signal; a colored patch is trivially CNN-detectable. Shape stays (72,80,3). Off by default.
     _EGG_MARKER = {"none": (0, 0, 0), "carrying": (255, 0, 0), "delivered": (0, 255, 0)}
 
     def _get_obs(self, screen, ram_state):
-        """Dict observation: downsampled RGB screen (→ CNN, with the agent_063 egg-state corner marker)
-        + state vector (→ MLP). (10e ablation: visited-mask channel disabled.)"""
+        """Dict observation: downsampled RGB screen (-> CNN, with the optional egg-state corner marker)
+        + state vector."""
         rgb = screen[:, :, :3]                          # drop alpha
         image = rgb[::2, ::2].astype(np.uint8)          # downsample to 72x80 (this is a fresh copy)
-        if self.egg_marker:                             # agent_063 (default OFF — warm-marker run failed)
+        if self.egg_marker:                             # default OFF
             flags = ram_state["flag_elm_mr_pokemon"]
             if flags & ELM_BIT:
                 state = "delivered"
@@ -234,13 +215,12 @@ class PokemonEnvCNN(gym.Env):
 
         ram_state = self.ram_reader.read_all()
 
-        # DIRECTIONAL tile-novelty reset on egg pickup (agent_054). Re-arm ONLY the southern delivery
-        # corridor (Route 29 → New Bark → Elm's lab); the north pocket, Route 30 gate, AND Cherrygrove
-        # stay SPENT. So post-pickup the nearest fresh-tile income is ROUTE 29 — a directional pull
-        # south, the exact link where the front stalled. (10i/044-053 left Cherrygrove re-armed → the
-        # agent re-milked it and the front stalled: egg_delivered 0 across 1097 rollouts.) One-shot,
-        # latched on the egg flag, unfarmable (pre-pickup behavior unchanged → no pickup-avoidance,
-        # the 10f failure mode).
+        # DIRECTIONAL tile-novelty reset on egg pickup. Re-arm ONLY the southern delivery corridor
+        # (Route 29 -> New Bark -> Elm's lab); the north pocket, Route 30 gate, AND Cherrygrove stay
+        # SPENT. So post-pickup the nearest fresh-tile income is ROUTE 29 -- a directional pull south,
+        # the exact link where the return leg tends to stall. Leaving Cherrygrove re-armed instead let
+        # the agent re-milk it and the return leg stalled. One-shot, latched on the egg flag, and
+        # unfarmable (pre-pickup behavior is unchanged, so there is no pickup-avoidance).
         RETURN_CORRIDOR = {ROUTE_29, NEW_BARK, ELM_LAB}
         egg_now = bool(ram_state["flag_elm_mr_pokemon"] & MR_POKEMON_BIT)
         if egg_now and not self._egg_seen:
@@ -259,7 +239,7 @@ class PokemonEnvCNN(gym.Env):
         current_map = (ram_state["map_bank"], ram_state["map_number"])
         if current_map in WAYPOINT_ORDER:
             new_max_waypoint = max(self.max_waypoint, WAYPOINT_ORDER.index(current_map) + 1)
-            # R2b: dynamic episode budget — grow the step cap the instant the episode reaches a NEW
+            # dynamic episode budget — grow the step cap the instant the episode reaches a NEW
             # waypoint (long episodes must be earned). Frontier-origin episodes keep their existing
             # (shorter) frontier_max_steps cap untouched — this only applies to start/curriculum episodes.
             if (self.dynamic_episode_budget and not self._from_frontier
@@ -272,19 +252,18 @@ class PokemonEnvCNN(gym.Env):
                 and current_map in self.RETURN_ORDER):
             self.return_progress = max(self.return_progress, self.RETURN_ORDER[current_map])
 
-        # ── Frontier harvest (agent_059): snapshot promising states into the shared archive. Only
+        # ── Frontier harvest: snapshot promising states into the shared archive. Only
         # frontier-relevant cells (egg in hand/delivered, or inside the gym) are harvested — pre-egg
         # overworld is already practiced from start.state. The ~200KB save_state is taken LAZILY:
         # add() invokes the lambda only when the cell is new or has a higher score.
         if self.frontier is not None:
             egg_delivered = bool(ram_state["flag_elm_mr_pokemon"] & ELM_BIT)
             if egg_now or current_map == GYM_MAP:
-                # R4 audit: frontier_score's max_waypoint must be THIS CELL's own waypoint ordinal at
-                # capture time, NOT self.max_waypoint (the running EPISODE max — agent_061's exact
-                # depth-leak bug, replayed for waypoints instead of return_progress: an episode that
-                # earlier reached Violet City would stamp that ordinal onto a LATER, shallower
-                # New Bark cell, letting add()'s "higher score replaces" overwrite it and destroy the
-                # shallow cell the corridor still needs practiced). Compute the cell's own ordinal
+                # frontier_score's max_waypoint must be THIS CELL's own waypoint ordinal at capture
+                # time, NOT self.max_waypoint (the running EPISODE max). Otherwise an episode that
+                # earlier reached Violet City would stamp that high ordinal onto a LATER, shallower
+                # New Bark cell, and add()'s "higher score replaces" would overwrite and destroy the
+                # shallow cell the corridor still needs practiced. Compute the cell's own ordinal
                 # from current_map directly, mirroring the self.max_waypoint update above but WITHOUT
                 # the running max().
                 cell_waypoint = WAYPOINT_ORDER.index(current_map) + 1 if current_map in WAYPOINT_ORDER else 0
@@ -311,16 +290,15 @@ class PokemonEnvCNN(gym.Env):
 
         terminated = ram_state['zephyr'] or (ram_state['hp_ratio'] <= 0 and ram_state['battle_type'] == 0)  # Episode ends if we win or lose
 
-        # agent_087: confine-to-gym — leaving GYM_MAP ends the episode so the agent CANNOT wander out
+        # confine-to-gym — leaving GYM_MAP ends the episode so the agent CANNOT wander out
         # to wild-grind (the stable basin that capped 083-086 at ~40% badge). Forces it to solve the gym.
         # Off by default (corridor task); enabled via config.CONFINE_TO_GYM for the gym slice.
         if self.confine_to_gym and current_map != GYM_MAP:
             terminated = True
 
-        # R1 (final-attempt findings §2): confine-to-corridor — leaving CORRIDOR_LEGAL ends the episode
-        # so the agent CANNOT wander into Dark Cave / Sprout Tower / other off-path maps (agent_079's
-        # off-path lure: those episodes died earning nothing). Off by default; both flags are
-        # independently usable (mirrors confine_to_gym's placement exactly).
+        # confine-to-corridor: leaving CORRIDOR_LEGAL ends the episode, so the agent can't wander into
+        # Dark Cave / Sprout Tower / other off-path maps and stall there. Off by default; both this and
+        # confine_to_gym are independently usable.
         if self.confine_to_corridor and current_map not in CORRIDOR_LEGAL:
             terminated = True
 
@@ -352,7 +330,7 @@ class PokemonEnvCNN(gym.Env):
             "return_progress": self.return_progress,
         }
 
-        # agent_062: a FRONTIER episode ends the moment it delivers the egg — its job (practicing the
+        # a FRONTIER episode ends the moment it delivers the egg — its job (practicing the
         # carry→deliver backtrack) is done. Running on would add ~63k steps of off-task post-delivery
         # wandering, the aimless gradient that eroded the start policy into wandering in 059-061.
         # (Computed from the OLD prev_state, before it is overwritten below.)
@@ -374,7 +352,7 @@ class PokemonEnvCNN(gym.Env):
             self.pyboy.capture_gif(path, self.gif_frames)
         self.gif_frames = []  # Clear frames for the next episode
 
-        # Go-Explore frontier reset (agent_059): with prob p_frontier, restart from an archived cell
+        # Go-Explore frontier reset: with prob p_frontier, restart from an archived cell
         # sampled from the policy's OWN trajectory (if the shared archive is non-empty). Otherwise the
         # normal start.state reset. Episodes from a frontier cell are tagged (_from_frontier) so they
         # log under front/, keeping the nav/ start-state gate metrics clean.
@@ -387,9 +365,9 @@ class PokemonEnvCNN(gym.Env):
         else:
             screen = self.pyboy.reset()
             self._from_frontier = False
-        # agent_062: frontier episodes get the shorter cap (they end on delivery anyway); start
-        # episodes keep the full MAX_STEPS for the whole start→pickup→deliver→Phase-2 trajectory.
-        # R2b: dynamic_episode_budget overrides the start-episode cap to the earned-budget base
+        # frontier episodes get the shorter cap (they end on delivery anyway); start
+        # episodes keep the full MAX_STEPS for the whole start->pickup->deliver->gym trajectory.
+        # dynamic_episode_budget overrides the start-episode cap to the earned-budget base
         # (grows in step() as new waypoints are reached); frontier episodes are unaffected.
         if self._from_frontier:
             self._max_steps = self.frontier_max_steps

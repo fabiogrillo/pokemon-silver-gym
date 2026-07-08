@@ -9,7 +9,7 @@ milestones reached (waypoints, trainers, badge), and optionally writes the map-t
 The ROM is NOT bundled in the image (legal reasons) — mount it at runtime. Inference runs fine on CPU.
 
 Usage (local):
-  python -m agents.rl.play --model runs/checkpoints/agent_076/agent_076_final.zip --map --gif
+  python -m agents.rl.play --model runs/checkpoints/agent_090/agent_090_50000000_steps.zip --map --gif
 
 Usage (Docker): see Dockerfile / README. Env vars MODEL, STATE, MAX_STEPS act as defaults.
 """

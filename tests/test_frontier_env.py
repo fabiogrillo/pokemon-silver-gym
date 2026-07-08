@@ -1,5 +1,5 @@
 """
-Integration smoke test for the Go-Explore frontier reset wired into PokemonEnvCNN (agent_059).
+Integration smoke test for the Go-Explore frontier reset wired into PokemonEnvCNN.
 PyBoy-backed (loads the real ROM/states) — validates the code paths the unit tests can't:
 
   A. wrapper save_state_bytes() / reset_from_bytes() round-trip via the env's reset path
@@ -68,7 +68,7 @@ def test_harvest_populates_archive_from_egg_state():
 
 
 def test_frontier_episode_uses_short_cap():
-    # agent_062: a frontier episode truncates at frontier_max_steps; a start episode keeps MAX_STEPS.
+    # a frontier episode truncates at frontier_max_steps; a start episode keeps MAX_STEPS.
     with tempfile.TemporaryDirectory() as d:
         env = PokemonEnvCNN(ROM_PATH, "saves/start.state", headless=True, gif_dir=None,
                             frontier_root=d, p_frontier=1.0, frontier_max_steps=20)
@@ -89,7 +89,7 @@ def test_frontier_episode_uses_short_cap():
 
 
 def test_egg_state_marker_in_obs():
-    # agent_063: with egg_marker=True the obs image's top-left 8x8 corner encodes the egg quest state.
+    # with egg_marker=True the obs image's top-left 8x8 corner encodes the egg quest state.
     # start.state = no egg → BLACK; mid_route30.state = egg received (carrying, undelivered) → RED.
     # (Default is egg_marker=False — the warm-marker run failed; teachers see a clean obs.)
     env = PokemonEnvCNN(ROM_PATH, "saves/start.state", headless=True, gif_dir=None, egg_marker=True)

@@ -21,7 +21,7 @@ ROM_PATH   = "pokemon_rom.gbc"
 STATE_PATH = "saves/start.state"
 N_STEPS    = 1000
 
-EXPECTED_OBS_SHAPE = (72, 80, 3)  # 10e ablation: visited-mask channel disabled
+EXPECTED_OBS_SHAPE = (72, 80, 3)  # default obs image has no visited channel
 EXPECTED_OBS_DTYPE = np.uint8
 EXPECTED_INFO_KEYS = {
     "reward_exploration", "reward_events", "reward_penalties",
@@ -30,13 +30,13 @@ EXPECTED_INFO_KEYS = {
 
 
 def _check_obs(obs, where):
-    """Validate the Dict observation (PPO_CNN_10: image [RGB + visited mask] + state vector)."""
+    """Validate the Dict observation (image RGB + state vector)."""
     assert isinstance(obs, dict) and set(obs) == {"image", "vector"}, f"{where}: obs not Dict(image,vector)"
     img, vec = obs["image"], obs["vector"]
     assert img.shape == EXPECTED_OBS_SHAPE and img.dtype == np.uint8, f"{where}: image {img.shape} {img.dtype}"
     assert 0 <= img.min() and img.max() <= 255, f"{where}: image range [{img.min()},{img.max()}]"
     assert vec.shape == (11,) and 0.0 <= vec.min() and vec.max() <= 1.0, f"{where}: vector {vec.shape}"
-    # (10e ablation: visited-mask channel disabled; mask asserts removed. If the mask is re-enabled,
+    # (the default obs has no visited-mask channel; mask asserts removed. If visited_obs is enabled,
     # restore: shape (72,80,4), mask = img[:,:,3] binary, player metatile rows/cols 32:40 == 255.)
 
 

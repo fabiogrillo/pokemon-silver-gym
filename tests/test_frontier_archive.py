@@ -1,5 +1,5 @@
 """
-Unit tests for env.frontier_archive — the Go-Explore / frontier-reset archive (agent_059).
+Unit tests for env.frontier_archive — the Go-Explore / frontier-reset archive.
 
 Pure logic, NO PyBoy required (state payloads are fake bytes). Validates:
   - cell_key buckets coords and SPLITS on story flags (egg-in-hand vs not is a distinct cell)
@@ -50,23 +50,23 @@ def test_cell_key_splits_on_story_flags():
 
 
 def test_frontier_score_flat_tiers_no_depth_bias():
-    # agent_061 fix: score depends ONLY on the cell's own egg/delivered flags — NOT on depth.
+    # Score depends ONLY on the cell's own egg/delivered flags — NOT on episode depth.
     # 060 used 100+return_progress, so when a DEEP episode passed through a physically-shallow cell,
     # add()'s "higher score replaces" overwrote that shallow cell's score to a deep value → the
     # shallow Cherrygrove-with-egg states (where start episodes actually are) were destroyed and
     # never practiced → delivery never transferred to start (nav/egg_delivered flat 0 for 24M).
     # Flat tiers keep every carry cell EQUAL so shallow & deep carry states get uniform practice;
-    # carry ranks ABOVE delivered so Phase-1 transfer isn't starved by Phase-2 cells.
+    # carry ranks ABOVE delivered so egg-carry practice isn't starved by post-delivery cells.
     pre_egg = frontier_score(egg_received=False, egg_delivered=False, return_progress=0, max_waypoint=1, gym=0)
     carry_shallow = frontier_score(egg_received=True, egg_delivered=False, return_progress=1, max_waypoint=1, gym=0)
     carry_deep = frontier_score(egg_received=True, egg_delivered=False, return_progress=5, max_waypoint=1, gym=0)
     delivered = frontier_score(egg_received=True, egg_delivered=True, return_progress=5, max_waypoint=2, gym=0)
     delivered_gym = frontier_score(egg_received=True, egg_delivered=True, return_progress=5, max_waypoint=5, gym=1)
     assert carry_shallow == carry_deep, f"carry score must NOT depend on depth: {carry_shallow} vs {carry_deep}"
-    # R4 (final-attempt findings §2): delivered cells are no longer flat — they rank by the CELL's
-    # own waypoint ordinal so ε-greedy resets concentrate at the corridor's leading edge. Flatness
-    # is preserved one level down: two delivered cells at the SAME waypoint are still equal.
-    assert delivered < delivered_gym, "delivered cells rank by waypoint ordinal (R4 leading-edge sampling)"
+    # Delivered cells rank by the CELL's own waypoint ordinal so epsilon-greedy resets concentrate at
+    # the corridor's leading edge. Flatness is preserved one level down: two delivered cells at the
+    # SAME waypoint are still equal.
+    assert delivered < delivered_gym, "delivered cells rank by waypoint ordinal (leading-edge sampling)"
     same_wp = frontier_score(egg_received=True, egg_delivered=True, return_progress=9, max_waypoint=2, gym=0)
     assert delivered == same_wp, "delivered cells at the SAME waypoint stay flat (no depth bias within a tier)"
     assert pre_egg < carry_shallow, f"bad tiers: pre={pre_egg} carry={carry_shallow}"

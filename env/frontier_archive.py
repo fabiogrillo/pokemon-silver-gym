@@ -1,5 +1,5 @@
 """
-Go-Explore / frontier-reset archive (agent_059).
+Go-Explore / frontier-reset archive.
 
 A process-shared, on-disk archive of "frontier cells" — PyBoy save-states harvested from the
 START POLICY'S OWN trajectory. A fraction of env resets load from this archive instead of
@@ -40,46 +40,28 @@ def cell_key(ram_state, k=4):
 
 
 def frontier_score(egg_received, egg_delivered, return_progress, max_waypoint, gym):
-    """Priority TIER from the cell's OWN story flags — NOT episode depth (agent_061 fix), PLUS
-    (R4, docs/superpowers/specs/2026-07-06-final-attempt-findings.md §2) per-waypoint ranking
-    WITHIN the delivered tier for the corridor task.
+    """Priority TIER for a cell, from its OWN story flags — not the episode's depth when it was
+    captured — plus a per-waypoint ranking within the delivered tier.
 
-    agent_060 used depth-scoring (100 + return_progress), where return_progress is the EPISODE max.
-    When a deep episode passed through a physically-shallow carry cell, add()'s "higher score
-    replaces" rule overwrote that shallow cell's score to a deep value → the archive ended up with
-    163 lab-with-egg cells (105) but ~0 Cherrygrove-with-egg cells (102). Sampling then almost never
-    reset at the shallow carry states where the START episodes actually are, so the "push south from
-    Cherrygrove" segment was never practiced and delivery never transferred (nav/egg_delivered flat 0).
+    Scoring by episode depth (e.g. 100 + return_progress) is a trap: when a deep episode passes
+    through a physically-shallow cell, add()'s "higher score replaces" rule stamps the deep value onto
+    the shallow cell, and the archive fills up with deep states while the shallow states the START
+    episodes actually reset near go missing. Scoring from the cell's own flags avoids this — a cell's
+    score never changes after capture, so add() keeps the first (shallow-inclusive) state per cell,
+    and cells at the same tier are sampled uniformly by the epsilon-greedy reset.
 
-    agent_061's flat tiers fixed both failure modes: (1) a cell's score never changes, so add()
-    keeps the FIRST captured (shallow-included) state per cell — shallow carry cells persist;
-    (2) all carry cells are EQUAL, so ε-greedy samples uniformly across depths — shallow AND deep
-    carry states get practiced. carry (2) > delivered (1) > pre-egg (0) kept Phase-1 transfer from
-    being starved by Phase-2 cells. BOTH FIXES ARE STILL LOAD-BEARING and remain untouched here:
-    carry stays flat 2.0, pre-egg stays flat 0.0, and a cell's score still never changes after
-    capture (add() only ever raises a cell's own stored score, it never revisits it with a
-    different depth's value — see the R4 call-site audit note below).
-
-    R4 re-scores ONLY the delivered tier, because for the corridor task (final-attempt run) every
-    frontier-relevant state IS already egg-delivered — the carry/delivered split from the egg quest
-    is now largely vestigial, and "delivered" was a flat 1.0 for every cell from New Bark all the way
-    to the gym. That flat-across-depth behavior, which was exactly right for carry cells (uniform
-    practice across the Cherrygrove backtrack), was wrong for the corridor: it gave the leading edge
-    (Route 31 / gatehouse / Violet / gym) the SAME ε-greedy sampling weight as the already-consolidated
-    New Bark segment, so resets were spread thin instead of concentrated where the start policy is
-    still lagging. Delivered cells are now scored `1.0 + max_waypoint` (max_waypoint is the CELL's
-    own waypoint ordinal at capture time — 0..5 per WAYPOINT_ORDER in pokemon_env_cnn.py — not the
-    running episode max; see the call-site audit note), so gym-adjacent cells outrank New Bark cells
-    and ε-greedy exploitation concentrates at the leading edge. The tier stays flat WITHIN a single
-    waypoint level (agent_061's "no depth bias" fix is preserved one level down: two delivered cells
-    at the same waypoint are still equal, only the waypoint level itself now differentiates them).
-    Note this means a delivered cell deep in the corridor (max_waypoint >= 2) can now score ABOVE the
-    flat carry tier (2.0) — acceptable because carry cells barely occur once the corridor task is past
-    the egg quest; if Phase-1 (egg backtrack) practice is reintroduced, this tradeoff should be revisited."""
+    Within the delivered tier we add `max_waypoint` (the CELL's own corridor waypoint ordinal at
+    capture time, 0..5 per WAYPOINT_ORDER in pokemon_env_cnn.py — not the running episode max; see the
+    call-site note). A flat delivered tier gave the leading edge (Route 31 / gatehouse / Violet / gym)
+    the same sampling weight as the already-consolidated New Bark segment, spreading resets thin
+    instead of concentrating them where the policy still lags. With `1.0 + max_waypoint`, gym-adjacent
+    cells outrank New Bark cells while cells at the same waypoint stay equal (no depth bias one level
+    down). A deep delivered cell (max_waypoint >= 2) can therefore outrank the flat carry tier (2.0),
+    which is fine here since carry cells barely occur once the egg is delivered."""
     if egg_delivered:
-        return 1.0 + max_waypoint   # Phase-2: rank by the CELL's own waypoint ordinal (leading-edge sampling)
+        return 1.0 + max_waypoint   # rank by the CELL's own waypoint ordinal (leading-edge sampling)
     if egg_received:
-        return 2.0   # carry (egg in hand, undelivered) — the Phase-1 practice we want, FLAT across depth
+        return 2.0   # carry (egg in hand, undelivered) — the practice we want, FLAT across depth
     return 0.0       # pre-egg (start policy already does this)
 
 
