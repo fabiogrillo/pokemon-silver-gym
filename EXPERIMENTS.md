@@ -76,14 +76,38 @@ With all three, the final run (`agent_090`, cold, 100M steps planned) reached th
 **95% of start-state episodes, sustained from 30M to 70M steps** — the first agent in the project to
 solve full-corridor navigation from the New Bark start as a consolidated behavior.
 
-Two caveats, both honest:
+Three caveats, all honest:
 
 - **The badge is not reliably won by this policy.** Beating Falkner happened in only 6 of ~1500
   evaluation rollouts. The corridor reward optimizes navigation, not in-battle tactics.
 - **Late-training collapse.** Past 75M steps `reach_gym` fell from ~0.9 to ~0.0 — textbook on-policy
   PPO drift: with navigation consolidated but the badge reward still unmet, the gradient kept pushing
   and degraded the working behavior. Periodic checkpointing makes this free to recover from; the best
-  checkpoint is `agent_090_49999920` (50M steps, `reach_gym` ≈ 0.97), **not** the latest one.
+  checkpoint is `agent_090_49999920` (50M steps), **not** the latest one.
+- **The ~95% was a property of the *live* policy, not of any frozen checkpoint.** This one took a
+  full forensic pass to find. Loading the 50M (or 30M) checkpoint and rolling it out offline — same
+  env code, same wrapper stack, same save state, byte-identical observation spaces, even replaying
+  it through SB3's own rollout collector with the learning rate pinned to 0 — produces a policy that
+  wanders New Bark Town and never completes the corridor. Warm-starting a new run from the same zip
+  confirms it from the other side: its true-start metrics begin near zero, then recover over a few
+  million steps of fine-tuning. The training-time `reach_gym` was real, but it described a policy
+  being continuously updated *while* it played (a 12k-step episode spans several PPO updates, each
+  adapting to that very episode's fresh rollouts). The moment the weights are frozen, the behavior
+  isn't there. On-policy "solved" metrics do not certify checkpoints — only offline rollouts of the
+  frozen snapshot do.
+
+### Fine-tuning toward the badge (agent_091)
+
+The follow-up run warm-starts from `agent_090`'s 50M checkpoint with the learning rate halved, a
+short entropy anneal, and three of the twelve envs moved to gym-interior save states (two gym-start,
+one mid-Falkner-battle) so the remaining gap — the fight — gets direct gradient while eight
+true-start envs keep the corridor reinforced. The frontier archive is seeded from `agent_090`'s own
+814 harvested cells.
+
+The fine-tune fixed the frozen-checkpoint problem within 20M steps: `agent_091`'s 20M snapshot,
+rolled out cold from the New Bark start, walks the full corridor into the gym in ~5–6k steps per
+episode — verified offline in both `DummyVecEnv` and `SubprocVecEnv` harnesses, which is exactly the
+verification `agent_090` never passed.
 
 ### The gym fight: solved separately
 
