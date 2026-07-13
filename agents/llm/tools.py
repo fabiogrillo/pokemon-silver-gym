@@ -1,6 +1,7 @@
 import io
 
 from . import pathfind
+from . import sprites
 from .perception import format_state_text
 from env.actions import ACTIONS
 
@@ -354,8 +355,16 @@ def _execute_navigate(args, wrapper, ram_reader, cfg, state0):
             direction = recovery_direction
             target = None
         else:
+            # Live sprites (roaming NPCs, the scripted rival, camping trainers) re-read from the
+            # game's own object table before EVERY plan, so A* routes around people it has never
+            # bumped into -- blocked_tiles then only has to catch what the table can't (see
+            # agents/llm/sprites.py). The goal tile itself stays plannable: if a person is
+            # standing ON the goal, walking up to them and engaging is the right move, and
+            # astar() refusing `goal_xy in blocked` would report a misleading permanent block.
+            npc_tiles = sprites.live_npc_tiles(wrapper.pyboy) - {goal}
             directions = pathfind.plan(state0["map_bank"], state0["map_number"], cur_xy, goal,
-                                        grids=grids, blocked=frozenset(blocked_tiles))
+                                        grids=grids,
+                                        blocked=frozenset(blocked_tiles) | npc_tiles)
             if directions:  # goal-already-reached case is handled by the check above
                 greedy_fallbacks = 0
                 direction = directions[0]
