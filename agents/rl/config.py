@@ -1,9 +1,10 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Values here reproduce the corridor run whose results are written up in EXPERIMENTS.md.
+# Current run: fine-tune the corridor navigator's best checkpoint toward the end-to-end badge
+# (the corridor run itself is written up in EXPERIMENTS.md).
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_090"
+RUN_NAME = "agent_091"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -14,15 +15,16 @@ MODEL_DIR  = "runs/checkpoints/"           # checkpoint output
 # ── Environments & curriculum ────────────────────────────────────────────────
 N_ENVS_CNN = 12                            # PyBoy is CPU-bound; 12 workers on a 16-core box
 
-# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. The majority start from the true
-# task start (egg_delivered_clean) so the nav/* metrics stay a clean success gate; a few envs
-# start further along the corridor to give direct gradient at the harder late segments. All
-# states share the same story flags (post egg-delivery), so they don't segregate the policy.
+# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. The navigation is already solved by
+# the warm-start checkpoint, so this mix points most of the direct gradient at the remaining gap
+# (the gym fight) while keeping enough true-start envs that the corridor behavior is continuously
+# reinforced and can't be forgotten. All states share the same story flags (post egg-delivery),
+# so they don't segregate the policy.
 CURRICULUM_STATES_CNN = [
-    ("saves/crossing.state",            1),   # Route 29 -> Cherrygrove crossing
-    ("saves/route31.state",             1),   # Route 31, past the gate
-    ("saves/violet_city.state",         1),   # Violet City end
-    ("saves/egg_delivered_clean.state", 9),   # true start; the last 4 are the frontier envs
+    ("saves/route31.state",             1),   # Route 31, past the gate (late-corridor upkeep)
+    ("saves/violet_city_gym.state",     2),   # inside the gym: bird keepers -> Falkner
+    ("saves/falkner_battle.state",      1),   # mid-battle vs Falkner (direct badge gradient)
+    ("saves/egg_delivered_clean.state", 8),   # true start; the last 4 are the frontier envs
 ]
 
 # ── Episode / exploration structure ──────────────────────────────────────────
@@ -43,7 +45,7 @@ VISITED_OBS         = True     # add a 48x48 crop of this episode's visited tile
 # A fraction of resets restart from save-states sampled from the policy's own trajectory, which
 # manufactures the state diversity 12 envs alone can't reach across the Route 29 bottleneck.
 FRONTIER_ENABLED   = True
-FRONTIER_SEED_FROM = None                       # optional archive dir to seed from at launch
+FRONTIER_SEED_FROM = "runs/frontier_archive/agent_090"  # bootstrap from the navigator's own cells
 FRONTIER_N_ENVS    = 4                          # dedicated frontier envs; the other 8 are pure-start
 FRONTIER_P         = 1.0                         # reset probability for a frontier env (start envs are 0)
 FRONTIER_MAX_STEPS = 8000                        # truncate a frontier episode past this many steps
@@ -55,18 +57,19 @@ FRONTIER_ROOT      = "runs/frontier_archive"     # per-run subdir <ROOT>/<RUN_NA
 # ── PPO hyperparameters (CNN policy) ─────────────────────────────────────────
 GAMMA                = 0.999       # long-horizon discount: waypoints are thousands of steps apart
 GAE_LAMBDA           = 0.95
-LEARNING_RATE_CNN    = 7e-5
+LEARNING_RATE_CNN    = 3e-5        # halved vs the cold run: fine-tune, don't overwrite
 N_STEPS_CNN          = 2048        # rollout length per env
 BATCH_SIZE_CNN       = 512
 N_EPOCHS_CNN         = 4
-ENT_COEF_CNN         = 0.02        # entropy coefficient, annealed down (see below)
+ENT_COEF_CNN         = 0.01        # entropy coefficient, annealed down (see below)
 ENT_COEF_CNN_END     = 0.005       # anneal target: explore battle-menu moves early, then commit
-ENT_ANNEAL_STEPS_CNN = 8_000_000   # anneal 0.02 -> 0.005 over the first 8M steps, then hold
+ENT_ANNEAL_STEPS_CNN = 4_000_000   # short anneal: the warm-start policy is already consolidated
 
 # ── Run length & checkpoints ─────────────────────────────────────────────────
-TOTAL_TIMESTEPS_CNN = 100_000_000
-CHECKPOINT_FREQ_CNN = 5_000_000    # in timesteps; train_cnn divides by N_ENVS for the SB3 callback
+TOTAL_TIMESTEPS_CNN = 50_000_000
+CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS for the SB3 callback
+                                   # (tight: late-training collapse means the best checkpoint is
+                                   # rarely the last — keep fine recovery points)
 
-# Warm-start checkpoint, or None for a cold start. This run is cold because VISITED_OBS adds a new
-# observation key, so no earlier checkpoint has a compatible policy input.
-INIT_FROM_CHECKPOINT = None
+# Warm-start checkpoint: the corridor navigator at its best (pre-collapse) snapshot.
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_090/agent_090_49999920_steps.zip"
