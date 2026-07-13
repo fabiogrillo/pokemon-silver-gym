@@ -46,7 +46,10 @@ OUT_MAX_W = 900  # never emit native (7520px-wide) frames — cap every PNG/GIF 
 # ─────────────────────────────────────────────────────────────────────────────
 def rollout_positions(model, state_path, max_steps, deterministic):
     """Run one episode and return the list of (bank, num, lx, ly) RAM readings (pre-step states)."""
-    vec, env = build_vec_env(state_path, gif_dir=None, watch=False)
+    # The model is already loaded here, so read the space off it directly rather than re-opening
+    # the zip (matters for --all-checkpoints, which calls this once per checkpoint).
+    vec, env = build_vec_env(state_path, gif_dir=None, watch=False,
+                             visited_obs="visited" in model.observation_space.spaces)
     obs = vec.reset()
     positions = []
     for _ in range(max_steps):

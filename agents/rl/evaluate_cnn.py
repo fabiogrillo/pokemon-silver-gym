@@ -19,17 +19,32 @@ import sys
 import numpy as np
 import torch
 from stable_baselines3 import PPO
+from stable_baselines3.common.save_util import load_from_zip_file
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack, VecTransposeImage
 from env.pokemon_env_cnn import PokemonEnvCNN
 from agents.rl import config
 
 
-def build_vec_env(state_path: str, gif_dir: str | None, watch: bool, speed: int = 0):
+def checkpoint_visited_obs(model_path: str) -> bool:
+    """Whether the checkpoint was trained with the visited-coordinates Dict-obs key.
+
+    Checkpoints from before VISITED_OBS (e.g. the gym agent) and after it have incompatible
+    observation spaces; peeking at the space saved inside the zip lets every CLI tool build a
+    matching env automatically instead of taking a flag the caller can get wrong.
+    """
+    data, _, _ = load_from_zip_file(model_path, device="cpu")
+    return "visited" in getattr(data["observation_space"], "spaces", {})
+
+
+def build_vec_env(state_path: str, gif_dir: str | None, watch: bool, speed: int = 0,
+                  visited_obs: bool = False):
     """Build the same wrapper stack used in training, minus VecNormalize.
 
     If watch=True, the underlying PyBoy opens an SDL2 window so you can see
     the agent play in real time. Use DummyVecEnv only (single process), since
     SDL2 + SubprocVecEnv is unreliable.
+
+    `visited_obs` must match the checkpoint being loaded (see checkpoint_visited_obs).
 
     Returns (vec_env, underlying_env) so the caller can read the badge bit
     from RAM directly at episode end.
@@ -42,6 +57,7 @@ def build_vec_env(state_path: str, gif_dir: str | None, watch: bool, speed: int 
             gif_dir=gif_dir,
             gif_every_n_episodes=1 if gif_dir else 10**9,
             gif_prefix="eval",
+            visited_obs=visited_obs,
             # confine_to_gym / confine_to_corridor are intentionally NOT passed here (both default
             # False in PokemonEnvCNN): eval must never confine the agent — we need the true,
             # un-clipped success/behavior signal, same as today's confine_to_gym handling.
@@ -82,7 +98,8 @@ def evaluate(model_path: str, n_episodes: int, state_path: str,
     print(f"[eval] max_steps: {max_steps or 'env default'}")
     print()
 
-    vec, underlying = build_vec_env(state_path, gif_dir, watch, speed)
+    vec, underlying = build_vec_env(state_path, gif_dir, watch, speed,
+                                    visited_obs=checkpoint_visited_obs(model_path))
     model = PPO.load(model_path, env=vec, device=device)
 
     results = []

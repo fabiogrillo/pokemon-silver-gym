@@ -20,7 +20,7 @@ import os
 import torch
 from stable_baselines3 import PPO
 
-from agents.rl.evaluate_cnn import build_vec_env
+from agents.rl.evaluate_cnn import build_vec_env, checkpoint_visited_obs
 from agents.rl import map_layout as ml
 
 WAYPOINT_NAMES = ["start", "cherrygrove", "route30_gate", "route31", "violet", "gym"]
@@ -32,7 +32,8 @@ def play(model_path, state_path, max_steps, deterministic, make_map, make_gif_cl
           f"device={device} max_steps={max_steps}")
 
     model = PPO.load(model_path, device=device)
-    vec, env = build_vec_env(state_path, gif_dir=None, watch=False)
+    vec, env = build_vec_env(state_path, gif_dir=None, watch=False,
+                             visited_obs="visited" in model.observation_space.spaces)
     obs = vec.reset()
 
     positions = []

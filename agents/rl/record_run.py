@@ -19,13 +19,14 @@ import imageio.v3 as iio
 import torch
 from stable_baselines3 import PPO
 
-from agents.rl.evaluate_cnn import build_vec_env
+from agents.rl.evaluate_cnn import build_vec_env, checkpoint_visited_obs
 
 
 def record(model_path, state_path, out_dir, max_steps, deterministic):
     os.makedirs(out_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    vec, env = build_vec_env(state_path, gif_dir=None, watch=False)
+    vec, env = build_vec_env(state_path, gif_dir=None, watch=False,
+                             visited_obs=checkpoint_visited_obs(model_path))
     model = PPO.load(model_path, device=device)
 
     # DummyVecEnv auto-resets the underlying env INSIDE step_wait() the moment

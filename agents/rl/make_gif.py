@@ -24,7 +24,7 @@ import numpy as np
 import imageio.v3 as iio
 import torch
 from stable_baselines3 import PPO
-from agents.rl.evaluate_cnn import build_vec_env
+from agents.rl.evaluate_cnn import build_vec_env, checkpoint_visited_obs
 
 SEC_PER_ENV_STEP = 16.0 / 60.0  # 16 emulator frames per env-step at 60 fps
 
@@ -33,7 +33,8 @@ def make_gif(model_path, state_path, out_path, max_steps, speed, frame_skip, det
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[gif] model={os.path.basename(model_path)} state={os.path.basename(state_path)} "
           f"max_steps={max_steps} speed={speed}x frame_skip={frame_skip}")
-    vec, env = build_vec_env(state_path, gif_dir=None, watch=False)
+    vec, env = build_vec_env(state_path, gif_dir=None, watch=False,
+                             visited_obs=checkpoint_visited_obs(model_path))
     model = PPO.load(model_path, device=device)
 
     obs = vec.reset()
