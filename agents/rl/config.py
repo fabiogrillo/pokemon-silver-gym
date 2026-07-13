@@ -53,6 +53,8 @@ FRONTIER_EPSILON   = 0.1                         # uniform-sampling floor vs fro
 FRONTIER_ROOT      = "runs/frontier_archive"     # per-run subdir <ROOT>/<RUN_NAME>/ (cleared at start)
 
 # ── PPO hyperparameters (CNN policy) ─────────────────────────────────────────
+GAMMA                = 0.999       # long-horizon discount: waypoints are thousands of steps apart
+GAE_LAMBDA           = 0.95
 LEARNING_RATE_CNN    = 7e-5
 N_STEPS_CNN          = 2048        # rollout length per env
 BATCH_SIZE_CNN       = 512
