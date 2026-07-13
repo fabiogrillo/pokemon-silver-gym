@@ -126,7 +126,7 @@ The vision-LLM agent (`qwen3-vl:8b`, local via Ollama) reads the screen + a text
 calls one tool per turn (`move` / `press` / `navigate_to` / `get_state` / `wait_frames`).
 `navigate_to` runs A* over collision grids extracted from the game's map data.
 
-Five attempts were run against the corridor task, iterating on a single failure mode:
+Six attempts were run against the corridor task, iterating on a single failure mode:
 
 1. The model would not pick strategic navigation targets — it perseverated on one coordinate. Fix: a
    **harness-owned leg checklist** where the harness (not the model) tracks the corridor as an
@@ -136,18 +136,31 @@ Five attempts were run against the corridor task, iterating on a single failure 
    static collision grid can't see. Each hardening pass (recover from a scripted NPC by engaging it →
    take a probe-verified greedy step when A* fails → face-and-press to clear a camping trainer)
    closed one interaction class, and a new sprite exposed the next.
+3. Attempt 6 closed the sprite class wholesale: read the live NPC positions out of the game's own
+   object table (`wObjectStructs`, from the pokegold disassembly, verified against the emulator) and
+   feed them to A* as blocked tiles before every plan, so the executor routes around people it has
+   never bumped into. It worked — the corridor that had taken hours of grinding fell in minutes
+   (Route 29 + Cherrygrove crossed by turn ~183) — and then exposed the next class: the agent
+   stepped through a doorway into a **gridless interior** (no collision grid is committed for
+   houses) and spent 271 turns sliding along one row of a small room, misreading which map it was
+   on, until the run was cut. Each fix genuinely raises the floor; the environment keeps having a
+   next thing.
 
-Best result across all five attempts: **Route 30 (2 of 6 maps)**. The LLM never reached Violet City,
+Best result across all six attempts: **Route 30 (2 of 6 maps)**. The LLM never reached Violet City,
 the gym, or Falkner from the New Bark start. The failure is executor/environment coupling, not
 reasoning: the model plans correctly but cannot execute reliably against an adversarial, unpredictable
 environment one tool call at a time — exactly the kind of problem RL's trial-and-error solves.
+
+Started from a save state inside the gym, the same agent beats both bird keepers (real battle wins,
+picking moves) and then stalls against Falkner for ~850 turns with a level-4 Weedle on the field —
+tactical reasoning holds up in the small, it's the long-horizon execution that never closes.
 
 ## Result
 
 | | Best result from the New Bark start | Reaches Violet Gym | Beats Falkner |
 |---|---|---|---|
-| **RL** (`agent_090`) | full corridor | yes, ~95% | transient only; solved at 100% in isolation by `agent_087` |
-| **LLM** (`qwen3-vl:8b`, 5 attempts) | Route 30 (2/6 maps) | no | no |
+| **RL** (`agent_091`, fine-tuned) | full corridor | yes, ~90% as a **frozen checkpoint** (38/41 offline episodes) | fine-tune in progress; solved at 100% in isolation by `agent_087` |
+| **LLM** (`qwen3-vl:8b`, 6 attempts) | Route 30 (2/6 maps) | no | no (beats both bird keepers from a gym start, stalls on Falkner) |
 
 ## A note on reading the game's memory
 

@@ -10,10 +10,11 @@ Game Boy environment, so the comparison is apples-to-apples: *learning by trial-
 ![RL vs LLM — same game, same goal](assets/comparison.gif)
 
 **The result:** the RL agent solves the overworld navigation the LLM cannot. From the New Bark start,
-the trained policy reaches the Violet Gym in about **95% of episodes**; the LLM, after five iterations
-of tool and harness work, gets about a third of the way (Route 30) before dynamic obstacles stall it.
-The full story — including what it took to get there and where each agent still falls short — is in
-[`EXPERIMENTS.md`](EXPERIMENTS.md).
+the trained policy reaches the Violet Gym in about **90% of episodes as a frozen checkpoint**; the
+LLM, after six iterations of tool and harness work, gets about a third of the way (Route 30) before
+the environment finds its next weakness. The full story — including what it took to get there, where
+each agent still falls short, and why "solved during training" turned out not to mean "solved as a
+checkpoint" — is in [`EXPERIMENTS.md`](EXPERIMENTS.md).
 
 ---
 
@@ -118,28 +119,32 @@ trainer battles won, badge obtained.
   with strict scale discipline (`env/rewards.py`).
 - 12 parallel environments, a Go-Explore frontier archive for exploration, and structural episode
   termination (leaving the corridor ends the episode) that proved decisive.
-- **Navigation: solved.** The final run reaches the Violet Gym in ~95% of start-state episodes,
-  sustained across 30M–70M steps.
+- **Navigation: solved — and certified offline.** The corridor run's training metrics (~95%
+  reach-gym) turned out to describe only the *live*, continuously-updating policy; its frozen
+  checkpoints could not navigate at all. A fine-tune pass (`agent_091`) fixed that: its checkpoint
+  walks New Bark → gym cold in ~5–6k steps, ~90% of offline episodes.
 - **Gym fight: solved in isolation** at 100% badge rate (trained from inside the gym). Beating Falkner
-  end-to-end from the same policy that navigates is the remaining gap; composing the two is the next step.
+  end-to-end from the same policy that navigates is the remaining gap the fine-tune is training toward.
 
 ## LLM agent — ReAct (local vision + text)
 
 - ReAct loop over a local Ollama model (`qwen3-vl:8b`): each turn it reads the screen plus a text
   state summary and calls one tool (`move` / `press` / `navigate_to` / `wait_frames` / `get_state`).
 - `navigate_to` runs A* over collision grids extracted from the game's map data; a harness owns the
-  corridor as an ordered leg checklist so each turn's prompt carries only the current sub-goal.
+  corridor as an ordered leg checklist so each turn's prompt carries only the current sub-goal. The
+  final iteration also reads live NPC positions out of the game's object table so A* routes around
+  people before bumping into them.
 - **Finding:** the model became reliably obedient to the harness (~96% of overworld turns issue the
-  right `navigate_to`), but the corridor is gated by *dynamic sprites* (a scripted rival, wandering
-  NPCs, camping trainers) that the static grid can't see. Each executor fix closed one interaction
-  class and the next sprite exposed another. Best result over five attempts: Route 30.
+  right `navigate_to`), but every closed failure class exposed a new one — dynamic sprites, then
+  gridless interiors. Best result over six attempts: Route 30. From a gym start it beats both bird
+  keepers in real battles, then stalls against Falkner.
 
 ## Result
 
 | | Best result from the New Bark start | Reaches Violet Gym | Beats Falkner |
 |---|---|---|---|
-| **RL** (`agent_090`) | full corridor | yes, ~95% | transient; solved at 100% in isolation (`agent_087`) |
-| **LLM** (`qwen3-vl:8b`, 5 attempts) | Route 30 (2/6 maps) | no | no |
+| **RL** (`agent_091`) | full corridor | yes, ~90% (frozen checkpoint, offline) | fine-tune in progress; solved at 100% in isolation (`agent_087`) |
+| **LLM** (`qwen3-vl:8b`, 6 attempts) | Route 30 (2/6 maps) | no | no |
 
 Numbers are produced by `agents/rl/evaluate_cnn.py` (RL) and `agents/llm/run.py` (LLM), joined by
 `agents/comparison.py`. The reasoning behind every design choice is in [`EXPERIMENTS.md`](EXPERIMENTS.md).
@@ -167,15 +172,15 @@ tensorboard --logdir ./runs/          # http://localhost:6006
 Evaluate / watch a checkpoint (`--watch` opens an SDL2 window; `--speed 2` = 2× so it is viewable):
 
 ```bash
-python -m agents.rl.evaluate_cnn --model runs/checkpoints/agent_090/agent_090_50000000_steps.zip \
+python -m agents.rl.evaluate_cnn --model runs/checkpoints/agent_091/agent_091_19999968_steps.zip \
   --state saves/egg_delivered_clean.state --episodes 10 --watch --speed 2 --log
 ```
 
 Visualize where the agent went (trajectory + heatmap overlay → PNG + GIF):
 
 ```bash
-python -m agents.rl.visualize_map --model runs/checkpoints/agent_090/agent_090_50000000_steps.zip \
-  --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_090
+python -m agents.rl.visualize_map --model runs/checkpoints/agent_091/agent_091_19999968_steps.zip \
+  --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_091
 ```
 
 Run the LLM agent locally (needs `ollama serve` + `ollama pull qwen3-vl:8b`):
@@ -199,10 +204,11 @@ python -m pytest tests/ -q
 - [x] PPO training pipeline (SubprocVecEnv + TensorBoard + checkpoints) + Go-Explore frontier archive
 - [x] Evaluation tooling (per-episode JSONL, GIF, live `--watch`) and map-visualization overlays
 - [x] **RL gym fight solved** — 100% badge rate from inside the gym (`agent_087`)
-- [x] **RL corridor navigation solved** — ~95% reach-gym from the New Bark start (`agent_090`)
-- [x] **LLM agent** — vision + ReAct + tool-calling + A* over Ollama (`qwen3-vl:8b`)
+- [x] **RL corridor navigation solved** — ~90% reach-gym from the New Bark start as a frozen
+      checkpoint (`agent_091`, fine-tuned from `agent_090`)
+- [x] **LLM agent** — vision + ReAct + tool-calling + sprite-aware A* over Ollama (`qwen3-vl:8b`)
 - [x] RL vs LLM comparison + `docker compose` packaging for both agents
-- [ ] End-to-end badge from a single policy (compose navigation + the gym fight)
+- [ ] End-to-end badge from a single policy (the `agent_091` fine-tune is training toward it)
 
 ---
 

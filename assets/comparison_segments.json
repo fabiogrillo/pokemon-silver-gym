@@ -3,15 +3,93 @@
   "segments": [
     {
       "seconds": 7,
-      "rl": [0, 31],
-      "llm": [12, 72],
-      "caption": "Okay, let's see. The user is currently in a battle with Bird Keeper Abe, and the message says he was defeated. So the battle just ended. According to the instructions, after defeating a trainer, I need to go back to navigating toward Falkner."
+      "title": "Ch.1 New Bark -> Cherrygrove",
+      "rl": [
+        0,
+        640
+      ],
+      "llm": [
+        0,
+        183
+      ],
+      "rl_dir": "runs/comparison_footage/rl_corridor_091",
+      "llm_dir": "runs/comparison_footage/llm_corridor",
+      "llm_trace": "runs/llm_logs/run_1783971285.jsonl"
     },
     {
       "seconds": 7,
-      "rl": [513, 842],
-      "llm": [110, 260],
-      "caption": "Okay, let's see. The user is in the Violet City Gym, trying to get to Falkner at the top. They've been stuck because they tried moving left but it's blocked. The walkable directions now show only left, but that didn't work. Wait, maybe I need to check the current state again."
+      "title": "Ch.1 Route 30 and beyond",
+      "rl": [
+        3394,
+        4770
+      ],
+      "llm": [
+        183,
+        346
+      ],
+      "rl_dir": "runs/comparison_footage/rl_corridor_091",
+      "llm_dir": "runs/comparison_footage/llm_corridor",
+      "llm_trace": "runs/llm_logs/run_1783971285.jsonl"
+    },
+    {
+      "seconds": 7,
+      "title": "Ch.1 Only RL reaches the gym",
+      "rl": [
+        4767,
+        5350
+      ],
+      "llm": [
+        346,
+        660
+      ],
+      "rl_dir": "runs/comparison_footage/rl_corridor_091",
+      "llm_dir": "runs/comparison_footage/llm_corridor",
+      "llm_trace": "runs/llm_logs/run_1783971285.jsonl"
+    },
+    {
+      "seconds": 7,
+      "title": "Ch.2 Gym - vs Bird Keeper Abe",
+      "rl": [
+        0,
+        420
+      ],
+      "llm": [
+        1,
+        48
+      ],
+      "rl_dir": "runs/comparison_footage/rl",
+      "llm_dir": "runs/comparison_footage/llm_gym",
+      "llm_trace": "runs/llm_logs/run_1783953416.jsonl"
+    },
+    {
+      "seconds": 7,
+      "title": "Ch.2 Gym - vs Bird Keeper Rod",
+      "rl": [
+        420,
+        700
+      ],
+      "llm": [
+        49,
+        134
+      ],
+      "rl_dir": "runs/comparison_footage/rl",
+      "llm_dir": "runs/comparison_footage/llm_gym",
+      "llm_trace": "runs/llm_logs/run_1783953416.jsonl"
+    },
+    {
+      "seconds": 8,
+      "title": "Ch.2 Falkner: RL wins the badge",
+      "rl": [
+        700,
+        843
+      ],
+      "llm": [
+        134,
+        984
+      ],
+      "rl_dir": "runs/comparison_footage/rl",
+      "llm_dir": "runs/comparison_footage/llm_gym",
+      "llm_trace": "runs/llm_logs/run_1783953416.jsonl"
     }
   ]
 }

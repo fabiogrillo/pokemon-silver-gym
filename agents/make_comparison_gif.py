@@ -106,8 +106,9 @@ def compose_frame(rl_frame: np.ndarray, llm_frame: np.ndarray,
     canvas.paste(Image.fromarray(upscale2x(llm_frame)), (rx, HEADER_H))
 
     y = HEADER_H + PANEL_H + 10
-    if title:  # chapter title lives under the RL panel, left of the reasoning caption
-        draw.text((lx, y), title, fill=(150, 150, 160), font=caption_font)
+    if title:  # chapter title lives under the RL panel, left of the reasoning caption; clip it
+        draw.text((lx, y), title[:34], fill=(150, 150, 160), font=caption_font)  # so it can't
+        # run into the caption column
     for line in caption_lines:
         draw.text((rx, y), line, fill=(230, 230, 230), font=caption_font)
         y += 22
