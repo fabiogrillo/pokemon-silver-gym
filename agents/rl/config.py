@@ -1,10 +1,11 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Current run: fine-tune the corridor navigator's best checkpoint toward the end-to-end badge
-# (the corridor run itself is written up in EXPERIMENTS.md).
+# Current run: resume the badge fine-tune. agent_091 was cut at 45.6M/50M by a host reboot with
+# badge_rate just starting to land (0.5-1.0 on the gym envs); this run continues from its last
+# checkpoint with the same recipe to consolidate the end-to-end badge.
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_091"
+RUN_NAME = "agent_092"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -45,7 +46,7 @@ VISITED_OBS         = True     # add a 48x48 crop of this episode's visited tile
 # A fraction of resets restart from save-states sampled from the policy's own trajectory, which
 # manufactures the state diversity 12 envs alone can't reach across the Route 29 bottleneck.
 FRONTIER_ENABLED   = True
-FRONTIER_SEED_FROM = "runs/frontier_archive/agent_090"  # bootstrap from the navigator's own cells
+FRONTIER_SEED_FROM = "runs/frontier_archive/agent_091"  # bootstrap from the interrupted run's cells
 FRONTIER_N_ENVS    = 4                          # dedicated frontier envs; the other 8 are pure-start
 FRONTIER_P         = 1.0                         # reset probability for a frontier env (start envs are 0)
 FRONTIER_MAX_STEPS = 8000                        # truncate a frontier episode past this many steps
@@ -61,15 +62,16 @@ LEARNING_RATE_CNN    = 3e-5        # halved vs the cold run: fine-tune, don't ov
 N_STEPS_CNN          = 2048        # rollout length per env
 BATCH_SIZE_CNN       = 512
 N_EPOCHS_CNN         = 4
-ENT_COEF_CNN         = 0.01        # entropy coefficient, annealed down (see below)
-ENT_COEF_CNN_END     = 0.005       # anneal target: explore battle-menu moves early, then commit
-ENT_ANNEAL_STEPS_CNN = 4_000_000   # short anneal: the warm-start policy is already consolidated
+ENT_COEF_CNN         = 0.005       # resume at agent_091's annealed end value (its anneal finished)
+ENT_COEF_CNN_END     = 0.005       # flat: no further anneal, the policy is consolidated
+ENT_ANNEAL_STEPS_CNN = 1_000_000   # irrelevant with equal start/end values
 
 # ── Run length & checkpoints ─────────────────────────────────────────────────
-TOTAL_TIMESTEPS_CNN = 50_000_000
+TOTAL_TIMESTEPS_CNN = 15_000_000   # the interrupted run's remaining ~5M plus room to consolidate
+                                   # the badge, which was just starting to land when it was cut
 CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS for the SB3 callback
                                    # (tight: late-training collapse means the best checkpoint is
                                    # rarely the last — keep fine recovery points)
 
-# Warm-start checkpoint: the corridor navigator at its best (pre-collapse) snapshot.
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_090/agent_090_49999920_steps.zip"
+# Warm-start checkpoint: agent_091's last snapshot before the host reboot killed the run.
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_091/agent_091_44999928_steps.zip"
