@@ -1,11 +1,14 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Current run: resume the badge fine-tune. agent_091 was cut at 45.6M/50M by a host reboot with
-# badge_rate just starting to land (0.5-1.0 on the gym envs); this run continues from its last
-# checkpoint with the same recipe to consolidate the end-to-end badge.
+# Current run: close the level gap that blocks the end-to-end badge. agent_092's frozen checkpoint
+# navigates 10/10 and wins the gym 10/10 from the lv-15 gym save state, but 0/10 end-to-end: the
+# navigator arrives at lv 9-12 (it flees most corridor battles) and the fight was only ever trained
+# from a lv-15 party. This run swaps the gym curriculum states for states harvested from agent_092's
+# own true-start trajectories (lead lv 12, realistic HP), so the fight is trained in exactly the
+# distribution the navigator produces.
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_092"
+RUN_NAME = "agent_093"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -16,16 +19,16 @@ MODEL_DIR  = "runs/checkpoints/"           # checkpoint output
 # ── Environments & curriculum ────────────────────────────────────────────────
 N_ENVS_CNN = 12                            # PyBoy is CPU-bound; 12 workers on a 16-core box
 
-# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. The navigation is already solved by
-# the warm-start checkpoint, so this mix points most of the direct gradient at the remaining gap
-# (the gym fight) while keeping enough true-start envs that the corridor behavior is continuously
-# reinforced and can't be forgotten. All states share the same story flags (post egg-delivery),
-# so they don't segregate the policy.
+# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. The three gym states are cells
+# harvested from agent_092's own frontier archive (true-start trajectories): lead lv 12, HP 29-47%,
+# party as the navigator actually delivers it — NOT the hand-made lv-15 saves/violet_city_gym.state,
+# whose level distribution the end-to-end pipeline never produces. All states share the same story
+# flags (post egg-delivery), so they don't segregate the policy.
 CURRICULUM_STATES_CNN = [
-    ("saves/route31.state",             1),   # Route 31, past the gate (late-corridor upkeep)
-    ("saves/violet_city_gym.state",     2),   # inside the gym: bird keepers -> Falkner
-    ("saves/falkner_battle.state",      1),   # mid-battle vs Falkner (direct badge gradient)
-    ("saves/egg_delivered_clean.state", 8),   # true start; the last 4 are the frontier envs
+    ("saves/gym_entrance_lv12.state",   1),   # gym interior, no trainers beaten (lv 12, 47% HP)
+    ("saves/gym_keeper1_lv12.state",    1),   # one bird keeper down (lv 12, 29% HP)
+    ("saves/gym_falkner_lv12.state",    1),   # both keepers down, only Falkner left (lv 12, 47% HP)
+    ("saves/egg_delivered_clean.state", 9),   # true start; the last 4 are the frontier envs
 ]
 
 # ── Episode / exploration structure ──────────────────────────────────────────
@@ -46,7 +49,7 @@ VISITED_OBS         = True     # add a 48x48 crop of this episode's visited tile
 # A fraction of resets restart from save-states sampled from the policy's own trajectory, which
 # manufactures the state diversity 12 envs alone can't reach across the Route 29 bottleneck.
 FRONTIER_ENABLED   = True
-FRONTIER_SEED_FROM = "runs/frontier_archive/agent_091"  # bootstrap from the interrupted run's cells
+FRONTIER_SEED_FROM = "runs/frontier_archive/agent_092"  # bootstrap from the previous run's cells
 FRONTIER_N_ENVS    = 4                          # dedicated frontier envs; the other 8 are pure-start
 FRONTIER_P         = 1.0                         # reset probability for a frontier env (start envs are 0)
 FRONTIER_MAX_STEPS = 8000                        # truncate a frontier episode past this many steps
@@ -67,11 +70,11 @@ ENT_COEF_CNN_END     = 0.005       # flat: no further anneal, the policy is cons
 ENT_ANNEAL_STEPS_CNN = 1_000_000   # irrelevant with equal start/end values
 
 # ── Run length & checkpoints ─────────────────────────────────────────────────
-TOTAL_TIMESTEPS_CNN = 15_000_000   # the interrupted run's remaining ~5M plus room to consolidate
-                                   # the badge, which was just starting to land when it was cut
+TOTAL_TIMESTEPS_CNN = 15_000_000   # one focused pass at the level-matched gym fight
 CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS for the SB3 callback
                                    # (tight: late-training collapse means the best checkpoint is
                                    # rarely the last — keep fine recovery points)
 
-# Warm-start checkpoint: agent_091's last snapshot before the host reboot killed the run.
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_091/agent_091_44999928_steps.zip"
+# Warm-start checkpoint: agent_092's final snapshot (nav 10/10 + lv-15 gym fight 10/10 frozen;
+# certified offline 2026-07-14 — see runs/eval_logs/agent_092_final_*.jsonl).
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_092/agent_092_final.zip"
