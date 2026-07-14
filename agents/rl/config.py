@@ -1,16 +1,16 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Current run: close the arrival-level gap from the corridor side. agent_093 (train the fight at
-# the harvested lv-12/low-HP states) failed both ways: the lv-12 no-heal chain is near-unwinnable
-# (0/10 offline, episodes stuck 6000 steps inside one battle) and 15M steps of gradient on it
-# eroded the lv-15 fight from 10/10 to 3/10. So instead make the navigator ARRIVE stronger: the
-# level-reward saturation knee moves from summed-party 15 to 30 (env/rewards.py), so winning
-# corridor battles out-earns fleeing them until the lead is ~lv 15 — the level at which the frozen
-# fight is already certified 10/10. Curriculum reverts to agent_092's (lv-15 gym states), and the
-# warm start is agent_092_final, NOT agent_093's degraded weights.
+# Current run: unlock healing. The 2026-07-14 certification chain isolated the end-to-end badge
+# blocker to ARRIVAL HP, not level: from the same harvested lv-12 gym-entrance state the frozen
+# policy (agent_094_final) wins the badge 8/10 with full HP vs 0/10 at the 47% HP the corridor
+# actually delivers. But the Violet Pokemon Center was outside CORRIDOR_LEGAL, so with the
+# confinement on, healing was architecturally impossible. This run adds the Center to the corridor
+# (env/rewards.py: VIOLET_POKECENTER in the whitelist -> new-tile income lures the policy through
+# the door; the pre-existing +2.0 heal reward pays for reaching the nurse) and trains the policy
+# to use it before the gym.
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_094"
+RUN_NAME = "agent_095"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -51,7 +51,7 @@ VISITED_OBS         = True     # add a 48x48 crop of this episode's visited tile
 # A fraction of resets restart from save-states sampled from the policy's own trajectory, which
 # manufactures the state diversity 12 envs alone can't reach across the Route 29 bottleneck.
 FRONTIER_ENABLED   = True
-FRONTIER_SEED_FROM = "runs/frontier_archive/agent_092"  # bootstrap from the previous run's cells
+FRONTIER_SEED_FROM = "runs/frontier_archive/agent_094"  # bootstrap from the previous run's cells
 FRONTIER_N_ENVS    = 4                          # dedicated frontier envs; the other 8 are pure-start
 FRONTIER_P         = 1.0                         # reset probability for a frontier env (start envs are 0)
 FRONTIER_MAX_STEPS = 8000                        # truncate a frontier episode past this many steps
@@ -72,11 +72,11 @@ ENT_COEF_CNN_END     = 0.005       # flat: no further anneal, the policy is cons
 ENT_ANNEAL_STEPS_CNN = 1_000_000   # irrelevant with equal start/end values
 
 # ── Run length & checkpoints ─────────────────────────────────────────────────
-TOTAL_TIMESTEPS_CNN = 15_000_000   # one pass at learning "win corridor battles, arrive ~lv 15"
+TOTAL_TIMESTEPS_CNN = 15_000_000   # one pass at discovering the heal-then-gym routine
 CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS for the SB3 callback
                                    # (tight: late-training collapse means the best checkpoint is
                                    # rarely the last — keep fine recovery points)
 
-# Warm-start checkpoint: agent_092's final snapshot (nav 10/10 + lv-15 gym fight 10/10 frozen;
-# certified offline 2026-07-14 — see runs/eval_logs/agent_092_final_*.jsonl).
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_092/agent_092_final.zip"
+# Warm-start checkpoint: agent_094's final snapshot (nav 9/10, gym lv15 10/10, and the certified
+# 8/10 full-HP lv-12 fight this run is meant to make reachable — see runs/eval_logs/).
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_094/agent_094_final.zip"

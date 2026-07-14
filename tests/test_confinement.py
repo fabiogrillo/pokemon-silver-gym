@@ -16,6 +16,7 @@ def test_corridor_legal_superset_of_whitelist():
     assert (24, 5) in CORRIDOR_LEGAL   # Elm's lab
     assert (10, 7) in CORRIDOR_LEGAL   # gym
     assert (26, 11) in CORRIDOR_LEGAL  # Violet gatehouse
+    assert (10, 10) in CORRIDOR_LEGAL  # Violet Pokemon Center (heal before the gym)
     assert (3, 70) not in CORRIDOR_LEGAL  # Dark Cave stays illegal
 
 

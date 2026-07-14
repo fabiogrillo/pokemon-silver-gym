@@ -53,6 +53,9 @@ DARK_CAVE        = (3, 70)   # dead-end without Flash — off-path exploration s
 VIOLET_GATEHOUSE = (26, 11)  # gate house between Route 31 and Violet City
 VIOLET_CITY      = (10, 5)   # Violet City main
 GYM_MAP          = (10, 7)   # Violet City Gym (Falkner)
+VIOLET_POKECENTER = (10, 10) # Violet City Pokemon Center 1F (heal before the gym). From the
+                             # pokegold disassembly map group 10 (VIOLET), cross-validated against
+                             # the two empirically-verified ids in the same group (city=5, gym=7).
 
 # ONLY these on-corridor maps pay the EXPLORATION reward (new-tile + new-map). Off-path maps —
 # Dark Cave & other caves (bank 3), Sprout Tower / Pokémon School, houses, side routes — pay NOTHING, so
@@ -60,8 +63,13 @@ GYM_MAP          = (10, 7)   # Violet City Gym (Falkner)
 # each cave floor / tower floor was a fresh "new map" worth +0.4 (at scale 4), diverting it off the path
 # (235 cave cells harvested!). Combat / level / heal / badge rewards are UNAFFECTED — the gym fight already
 # works, so the agent still does everything once it is on the corridor.
+# The Pokemon Center is whitelisted so its ~30 interior tiles pay the one-time new-tile income that
+# lures the policy through the door; once inside, the existing heal reward (+2.0 for a >0.4 HP jump
+# outside battle, below) pays for reaching the nurse. Certified 2026-07-14: the end-to-end badge is
+# blocked ONLY by arrival HP — from the same lv-12 arrival state the frozen policy wins 8/10 with
+# full HP vs 0/10 at 47% — and with CONFINE_TO_CORRIDOR the agent couldn't reach a heal at all.
 CORRIDOR_WHITELIST = {NEW_BARK, ROUTE_29, CHERRYGROVE, ROUTE_30_GATE, ROUTE_31,
-                      VIOLET_GATEHOUSE, VIOLET_CITY, GYM_MAP}
+                      VIOLET_GATEHOUSE, VIOLET_CITY, GYM_MAP, VIOLET_POKECENTER}
 
 # The exploration-reward gating above (CORRIDOR_WHITELIST) removes the INCOME from wandering off-path
 # into Dark Cave / Sprout Tower / other side-trips, but it doesn't remove the OPTION to do so.
