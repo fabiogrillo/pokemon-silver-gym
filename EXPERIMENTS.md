@@ -96,18 +96,52 @@ Three caveats, all honest:
   isn't there. On-policy "solved" metrics do not certify checkpoints — only offline rollouts of the
   frozen snapshot do.
 
-### Fine-tuning toward the badge (agent_091)
+### Fine-tuning toward the badge (agents 091–095)
 
-The follow-up run warm-starts from `agent_090`'s 50M checkpoint with the learning rate halved, a
-short entropy anneal, and three of the twelve envs moved to gym-interior save states (two gym-start,
-one mid-Falkner-battle) so the remaining gap — the fight — gets direct gradient while eight
-true-start envs keep the corridor reinforced. The frontier archive is seeded from `agent_090`'s own
-814 harvested cells.
+The follow-up campaign warm-starts from `agent_090`'s 50M checkpoint with the learning rate halved,
+a short entropy anneal, and three of the twelve envs moved to gym-interior save states (two
+gym-start, one mid-Falkner-battle) so the remaining gap — the fight — gets direct gradient while
+eight true-start envs keep the corridor reinforced. The frontier archive is seeded from each
+previous run's own harvested cells.
 
-The fine-tune fixed the frozen-checkpoint problem within 20M steps: `agent_091`'s 20M snapshot,
-rolled out cold from the New Bark start, walks the full corridor into the gym in ~5–6k steps per
-episode — verified offline in both `DummyVecEnv` and `SubprocVecEnv` harnesses, which is exactly the
-verification `agent_090` never passed.
+The first pass (`agent_091`) fixed the frozen-checkpoint problem within 20M steps: its 20M
+snapshot, rolled out cold from the New Bark start, walks the full corridor into the gym in ~5–6k
+steps per episode — verified offline in both `DummyVecEnv` and `SubprocVecEnv` harnesses, which is
+exactly the verification `agent_090` never passed. Its continuation (`agent_092`, resumed after a
+host reboot cut 091 at 45.6M steps) produced the project's first frozen checkpoint that does
+*both* halves: **10/10 offline corridor navigation from the true start, and 10/10 badge from the
+gym save state.** End-to-end, though, it went 0/10 — episodes reach the gym and then sit in
+battles for tens of thousands of steps without closing.
+
+Isolating that last gap took two more runs and one decisive diagnostic, and the answer is neither
+"navigation" nor "fighting":
+
+- **It isn't the level curriculum.** `agent_093` trained the fight at the arrival distribution the
+  navigator actually produces (gym-entrance states harvested from `agent_092`'s own true-start
+  trajectories: lead lv 12, 29–47% HP), on the theory that the fight had only ever been trained
+  from a hand-made lv-15 save state. Clean negative result: the lv-12 low-HP no-heal chain is
+  near-unwinnable (0/10; episodes spend all 6000 steps stuck inside a single battle), and 15M
+  steps of gradient on a task with no successes eroded the certified lv-15 fight from 10/10 to
+  3/10. A curriculum must contain reachable successes; an arrival distribution can't be trained
+  on — it has to be moved.
+- **It isn't the level reward either.** `agent_094` moved the level-reward saturation knee from
+  summed-party 15 to 30 (at 15, catches alone pushed the sum past the knee while the lead was
+  ~lv 10, so fleeing every corridor battle stayed optimal). That preserved the lv-15 fight at
+  10/10 without erosion — the right warm start and curriculum matter — but arrival level didn't
+  move: corridor wild Pokémon pay so little XP at lv 10+ that grinding is never the policy's
+  best move regardless of the reward's slope.
+- **It's the arrival HP.** The one-variable diagnostic: take the harvested lv-12 gym-entrance
+  state, write full HP into RAM, and roll out the frozen `agent_094` checkpoint. **8/10 badge**
+  (clean ~2.7k-step episodes; the gym chain itself levels the lead 12→14) versus **0/10** from
+  the identical state at the 47% HP the corridor actually delivers.
+
+Which closes the loop on a design irony: the reward function had carried a heal bonus all along
+("+2.0 for a >0.4 HP jump outside battle — encourages Pokémon Center use before the gym"), but the
+confine-to-corridor termination made it unreachable dead code: the Violet Pokémon Center was not
+in the legal corridor, so stepping through its door ended the episode. `agent_095` (in training)
+adds the Center to the corridor — its interior tiles pay the one-time new-tile income that lures
+the policy through the door, and the heal reward pays for the nurse — to learn the human routine:
+heal, then fight.
 
 ### The gym fight: solved separately
 
@@ -117,8 +151,9 @@ from a drifting ~40% to a reliable **100%**, because it removes the "wander out 
 battles" basin that had capped every reward-tuning attempt. Best gym agent: `agent_087`, 100% badge,
 ~840 steps/episode, zero losses.
 
-So both halves are solved — navigation as a ~95% behavior, the gym fight at 100% — just not welded
-into one end-to-end policy. Composing the two is the natural next step.
+So both halves are solved and *certified frozen* — navigation at 10/10 and the gym fight at 10/10
+in the same checkpoint (`agent_092`/`agent_094`) — and the weld between them is down to one
+measured variable: walking into the gym with full HP instead of half.
 
 ## The LLM agent
 
@@ -159,7 +194,7 @@ tactical reasoning holds up in the small, it's the long-horizon execution that n
 
 | | Best result from the New Bark start | Reaches Violet Gym | Beats Falkner |
 |---|---|---|---|
-| **RL** (`agent_091`, fine-tuned) | full corridor | yes, ~90% as a **frozen checkpoint** (38/41 offline episodes) | fine-tune in progress; solved at 100% in isolation by `agent_087` |
+| **RL** (`agent_092`/`agent_094`, fine-tuned) | full corridor | yes, 10/10 as a **frozen checkpoint** (offline) | 10/10 from the gym start (same frozen checkpoint); end-to-end blocked only by arrival HP — heal-unlock run in training |
 | **LLM** (`qwen3-vl:8b`, 6 attempts) | Route 30 (2/6 maps) | no | no (beats both bird keepers from a gym start, stalls on Falkner) |
 
 ## A note on reading the game's memory

@@ -10,11 +10,12 @@ Game Boy environment, so the comparison is apples-to-apples: *learning by trial-
 ![RL vs LLM — same game, same goal](assets/comparison.gif)
 
 **The result:** the RL agent solves the overworld navigation the LLM cannot. From the New Bark start,
-the trained policy reaches the Violet Gym in about **90% of episodes as a frozen checkpoint**; the
-LLM, after six iterations of tool and harness work, gets about a third of the way (Route 30) before
-the environment finds its next weakness. The full story — including what it took to get there, where
-each agent still falls short, and why "solved during training" turned out not to mean "solved as a
-checkpoint" — is in [`EXPERIMENTS.md`](EXPERIMENTS.md).
+the trained policy reaches the Violet Gym in **10/10 offline episodes as a frozen checkpoint**, and
+the same checkpoint beats Falkner 10/10 from the gym; the LLM, after six iterations of tool and
+harness work, gets about a third of the way (Route 30) before the environment finds its next
+weakness. The full story — including what it took to get there, where each agent still falls short,
+and why "solved during training" turned out not to mean "solved as a checkpoint" — is in
+[`EXPERIMENTS.md`](EXPERIMENTS.md).
 
 ---
 
@@ -121,10 +122,13 @@ trainer battles won, badge obtained.
   termination (leaving the corridor ends the episode) that proved decisive.
 - **Navigation: solved — and certified offline.** The corridor run's training metrics (~95%
   reach-gym) turned out to describe only the *live*, continuously-updating policy; its frozen
-  checkpoints could not navigate at all. A fine-tune pass (`agent_091`) fixed that: its checkpoint
-  walks New Bark → gym cold in ~5–6k steps, ~90% of offline episodes.
-- **Gym fight: solved in isolation** at 100% badge rate (trained from inside the gym). Beating Falkner
-  end-to-end from the same policy that navigates is the remaining gap the fine-tune is training toward.
+  checkpoints could not navigate at all. The fine-tune campaign (`agent_091`→`094`) fixed that:
+  the best checkpoints walk New Bark → gym cold in 10/10 offline episodes.
+- **Gym fight: solved in the same checkpoint** — 10/10 badge from the gym save state, frozen. The
+  end-to-end weld is down to one certified variable: the corridor delivers the agent at ~half HP,
+  and the identical arrival state wins 8/10 with full HP vs 0/10 without. Healing was
+  architecturally impossible (the Pokémon Center sat outside the legal corridor); the heal-unlock
+  run is training.
 
 ## LLM agent — ReAct (local vision + text)
 
@@ -143,7 +147,7 @@ trainer battles won, badge obtained.
 
 | | Best result from the New Bark start | Reaches Violet Gym | Beats Falkner |
 |---|---|---|---|
-| **RL** (`agent_091`) | full corridor | yes, ~90% (frozen checkpoint, offline) | fine-tune in progress; solved at 100% in isolation (`agent_087`) |
+| **RL** (`agent_092`/`agent_094`) | full corridor | yes, 10/10 (frozen checkpoint, offline) | 10/10 from the gym start; end-to-end blocked only by arrival HP (heal-unlock run in training) |
 | **LLM** (`qwen3-vl:8b`, 6 attempts) | Route 30 (2/6 maps) | no | no |
 
 Numbers are produced by `agents/rl/evaluate_cnn.py` (RL) and `agents/llm/run.py` (LLM), joined by
@@ -172,15 +176,15 @@ tensorboard --logdir ./runs/          # http://localhost:6006
 Evaluate / watch a checkpoint (`--watch` opens an SDL2 window; `--speed 2` = 2× so it is viewable):
 
 ```bash
-python -m agents.rl.evaluate_cnn --model runs/checkpoints/agent_091/agent_091_19999968_steps.zip \
+python -m agents.rl.evaluate_cnn --model runs/checkpoints/agent_094/agent_094_final.zip \
   --state saves/egg_delivered_clean.state --episodes 10 --watch --speed 2 --log
 ```
 
 Visualize where the agent went (trajectory + heatmap overlay → PNG + GIF):
 
 ```bash
-python -m agents.rl.visualize_map --model runs/checkpoints/agent_091/agent_091_19999968_steps.zip \
-  --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_091
+python -m agents.rl.visualize_map --model runs/checkpoints/agent_094/agent_094_final.zip \
+  --state saves/egg_delivered_clean.state --max-steps 8000 --out runs/maps/agent_094
 ```
 
 Run the LLM agent locally (needs `ollama serve` + `ollama pull qwen3-vl:8b`):
@@ -203,12 +207,14 @@ python -m pytest tests/ -q
 - [x] Gymnasium environment + RAM-driven reward shaping
 - [x] PPO training pipeline (SubprocVecEnv + TensorBoard + checkpoints) + Go-Explore frontier archive
 - [x] Evaluation tooling (per-episode JSONL, GIF, live `--watch`) and map-visualization overlays
-- [x] **RL gym fight solved** — 100% badge rate from inside the gym (`agent_087`)
-- [x] **RL corridor navigation solved** — ~90% reach-gym from the New Bark start as a frozen
-      checkpoint (`agent_091`, fine-tuned from `agent_090`)
+- [x] **RL gym fight solved** — 100% badge rate from inside the gym, now frozen in the same
+      checkpoint that navigates (`agent_092`/`agent_094`)
+- [x] **RL corridor navigation solved** — 10/10 reach-gym from the New Bark start as a frozen
+      checkpoint (fine-tune campaign `agent_091`→`094` from `agent_090`)
 - [x] **LLM agent** — vision + ReAct + tool-calling + sprite-aware A* over Ollama (`qwen3-vl:8b`)
 - [x] RL vs LLM comparison + `docker compose` packaging for both agents
-- [ ] End-to-end badge from a single policy (the `agent_091` fine-tune is training toward it)
+- [ ] End-to-end badge from a single policy — blocker certified to be arrival HP; the
+      Pokémon-Center unlock (`agent_095`) is training toward it
 
 ---
 
