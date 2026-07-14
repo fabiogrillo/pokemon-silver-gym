@@ -1,14 +1,16 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Current run: close the level gap that blocks the end-to-end badge. agent_092's frozen checkpoint
-# navigates 10/10 and wins the gym 10/10 from the lv-15 gym save state, but 0/10 end-to-end: the
-# navigator arrives at lv 9-12 (it flees most corridor battles) and the fight was only ever trained
-# from a lv-15 party. This run swaps the gym curriculum states for states harvested from agent_092's
-# own true-start trajectories (lead lv 12, realistic HP), so the fight is trained in exactly the
-# distribution the navigator produces.
+# Current run: close the arrival-level gap from the corridor side. agent_093 (train the fight at
+# the harvested lv-12/low-HP states) failed both ways: the lv-12 no-heal chain is near-unwinnable
+# (0/10 offline, episodes stuck 6000 steps inside one battle) and 15M steps of gradient on it
+# eroded the lv-15 fight from 10/10 to 3/10. So instead make the navigator ARRIVE stronger: the
+# level-reward saturation knee moves from summed-party 15 to 30 (env/rewards.py), so winning
+# corridor battles out-earns fleeing them until the lead is ~lv 15 — the level at which the frozen
+# fight is already certified 10/10. Curriculum reverts to agent_092's (lv-15 gym states), and the
+# warm start is agent_092_final, NOT agent_093's degraded weights.
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_093"
+RUN_NAME = "agent_094"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -19,16 +21,16 @@ MODEL_DIR  = "runs/checkpoints/"           # checkpoint output
 # ── Environments & curriculum ────────────────────────────────────────────────
 N_ENVS_CNN = 12                            # PyBoy is CPU-bound; 12 workers on a 16-core box
 
-# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. The three gym states are cells
-# harvested from agent_092's own frontier archive (true-start trajectories): lead lv 12, HP 29-47%,
-# party as the navigator actually delivers it — NOT the hand-made lv-15 saves/violet_city_gym.state,
-# whose level distribution the end-to-end pipeline never produces. All states share the same story
-# flags (post egg-delivery), so they don't segregate the policy.
+# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. Back to agent_092's mix: the lv-15
+# gym states are the ones whose fight competence provably freezes into checkpoints (10/10 offline);
+# agent_093 showed that harvested lv-12/low-HP states are a near-unwinnable task that only erodes
+# it. The corridor side of the badge gap is handled by the level-reward change (env/rewards.py),
+# not by the curriculum. All states share the same story flags (post egg-delivery).
 CURRICULUM_STATES_CNN = [
-    ("saves/gym_entrance_lv12.state",   1),   # gym interior, no trainers beaten (lv 12, 47% HP)
-    ("saves/gym_keeper1_lv12.state",    1),   # one bird keeper down (lv 12, 29% HP)
-    ("saves/gym_falkner_lv12.state",    1),   # both keepers down, only Falkner left (lv 12, 47% HP)
-    ("saves/egg_delivered_clean.state", 9),   # true start; the last 4 are the frontier envs
+    ("saves/route31.state",             1),   # Route 31, past the gate (late-corridor upkeep)
+    ("saves/violet_city_gym.state",     2),   # inside the gym: bird keepers -> Falkner
+    ("saves/falkner_battle.state",      1),   # mid-battle vs Falkner (direct badge gradient)
+    ("saves/egg_delivered_clean.state", 8),   # true start; the last 4 are the frontier envs
 ]
 
 # ── Episode / exploration structure ──────────────────────────────────────────
@@ -70,7 +72,7 @@ ENT_COEF_CNN_END     = 0.005       # flat: no further anneal, the policy is cons
 ENT_ANNEAL_STEPS_CNN = 1_000_000   # irrelevant with equal start/end values
 
 # ── Run length & checkpoints ─────────────────────────────────────────────────
-TOTAL_TIMESTEPS_CNN = 15_000_000   # one focused pass at the level-matched gym fight
+TOTAL_TIMESTEPS_CNN = 15_000_000   # one pass at learning "win corridor battles, arrive ~lv 15"
 CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS for the SB3 callback
                                    # (tight: late-training collapse means the best checkpoint is
                                    # rarely the last — keep fine recovery points)

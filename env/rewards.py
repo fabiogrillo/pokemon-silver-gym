@@ -209,13 +209,16 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
     # ── Max-based progress rewards (need persistent per-episode running maxima)
     if reward_maxes is not None:
         # Level reward with SATURATION (replaces the lead<=13 cap hack): full value while the summed
-        # party levels are <= 15, then 1/4 value beyond — 5→15 pays 10.0 (the levels needed for Falkner),
-        # 15→40 grinding pays only 6.25 TOTAL, so grinding self-extinguishes instead of hitting a cliff.
-        # (saturation pattern: min(s, K + (s-K)/4).)
+        # party levels are <= 30, then 1/4 value beyond, so grinding self-extinguishes instead of
+        # hitting a cliff. (saturation pattern: min(s, K + (s-K)/4).) K=30 and not 15 because the
+        # end-to-end badge needs a ~lv-15 lead at the gym door: with catches the navigator's summed
+        # party passes 15 while the lead is still lv ~10, where Falkner's chain is unwinnable — at
+        # K=15 fleeing every corridor battle stayed optimal and the agent arrived too weak
+        # (certified offline on agent_092/093, 2026-07-14).
         level_sum = sum(ram_state["party_levels"])
         if level_sum > reward_maxes["level_sum"]:
-            scaled_new = min(level_sum, 15.0 + (level_sum - 15.0) / 4.0)
-            scaled_old = min(reward_maxes["level_sum"], 15.0 + (reward_maxes["level_sum"] - 15.0) / 4.0)
+            scaled_new = min(level_sum, 30.0 + (level_sum - 30.0) / 4.0)
+            scaled_old = min(reward_maxes["level_sum"], 30.0 + (reward_maxes["level_sum"] - 30.0) / 4.0)
             events += 1.0 * (scaled_new - scaled_old)
             reward_maxes["level_sum"] = level_sum
 
