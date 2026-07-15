@@ -1,16 +1,14 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Current run: reverse curriculum ON THE HEAL ITSELF. Frontier-archive forensics showed the heal
-# never actually happened in 30M steps of Center curriculum (no post-fight full-HP cell exists):
-# the Center envs' live badge_rate ~1 came from winning Falkner at low HP, so the +2.0 heal reward
-# never fired and could never enter the gradient. The egg-delivery lesson applies: factorize the
-# unreachable behavior into learnable sub-goals. Three env resets now sit ON the heal interaction
-# at increasing distance — mid-dialog (a few A-presses from the heal), facing the nurse (one
-# A-press from the dialog), and at the Center door — all manufactured by scripted play and
-# verified to heal with a plain A-mash (see git history for the stuck-joypad bug found on the way).
+# Current run: slide the heal reverse-curriculum one rung outward. agent_098 froze the heal:
+# from the nurse-facing state the frozen checkpoint initiates the dialog, heals, walks to the gym
+# and takes the badge 10/10 (~1.8k steps, 0 losses) — the first frozen heal->fight->badge chain in
+# the project. From the Center door it's 3/10 and from the street 0; so the mastered mid-dialog
+# rung retires and a low-HP Violet street state (harvested cell, lead lv 13 at 7/40 HP, only
+# Falkner left) joins: street -> Center door -> nurse -> gym is now the chain under training.
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_098"
+RUN_NAME = "agent_099"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -21,16 +19,16 @@ MODEL_DIR  = "runs/checkpoints/"           # checkpoint output
 # ── Environments & curriculum ────────────────────────────────────────────────
 N_ENVS_CNN = 12                            # PyBoy is CPU-bound; 12 workers on a 16-core box
 
-# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. The three center_* states are cells
-# harvested from agent_095's frontier archive: inside the Pokemon Center, a few tiles from the
-# nurse, low/half HP, with 2 (or 1) gym trainers already beaten — so the heal (+2.0) and then the
-# badge are both reachable within a short horizon. The lv-15 gym env keeps the certified fight
-# competence reinforced (agent_094 held it at 10/10 with this anchor). All states share the same
-# story flags (post egg-delivery).
+# (state_path, n_envs) pairs; counts must sum to N_ENVS_CNN. The heal ladder (street -> door ->
+# facing) keeps every rung's success reachable from the rung above it, with the mastered rung kept
+# as a retention anchor; all low-HP states have 2 gym trainers beaten, so heal -> Falkner -> badge
+# closes within a short horizon. The lv-15 gym env keeps the certified fight competence reinforced
+# (that anchor held it at 9-10/10 through five runs). All states share the same story flags (post
+# egg-delivery).
 CURRICULUM_STATES_CNN = [
-    ("saves/center_nurse_dialog.state",        1),  # mid-dialog with the nurse: heal = a few A-presses
-    ("saves/center_nurse_facing.state",        1),  # facing the nurse at the counter: heal = A, then As
-    ("saves/center_falkner_lowhp_clean.state", 1),  # Center door, 7/40 HP (joypad-clean re-save)
+    ("saves/violet_street_lowhp.state",        1),  # Violet street, 7/40 HP: find the Center, heal, gym
+    ("saves/center_falkner_lowhp_clean.state", 1),  # Center door, 7/40 HP: reach the nurse (3/10 frozen)
+    ("saves/center_nurse_facing.state",        1),  # facing the nurse (10/10 frozen — retention rung)
     ("saves/violet_city_gym.state",            1),  # lv-15 gym anchor (fight-competence upkeep)
     ("saves/egg_delivered_clean.state",        8),  # true start; the last 4 are the frontier envs
 ]
@@ -53,7 +51,7 @@ VISITED_OBS         = True     # add a 48x48 crop of this episode's visited tile
 # A fraction of resets restart from save-states sampled from the policy's own trajectory, which
 # manufactures the state diversity 12 envs alone can't reach across the Route 29 bottleneck.
 FRONTIER_ENABLED   = True
-FRONTIER_SEED_FROM = "runs/frontier_archive/agent_097"  # carries the Center-interior cells forward
+FRONTIER_SEED_FROM = "runs/frontier_archive/agent_098"  # carries the Center-interior cells forward
 FRONTIER_N_ENVS    = 4                          # dedicated frontier envs; the other 8 are pure-start
 FRONTIER_P         = 1.0                         # reset probability for a frontier env (start envs are 0)
 FRONTIER_MAX_STEPS = 8000                        # truncate a frontier episode past this many steps
@@ -79,7 +77,6 @@ CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS f
                                    # (tight: late-training collapse means the best checkpoint is
                                    # rarely the last — keep fine recovery points)
 
-# Warm-start checkpoint: agent_097's final snapshot — the best base so far: nav 10/10 true-start,
-# gym lv15 10/10, and the first frozen badge from the low-HP Center state (1/10), all certified
-# offline 2026-07-15 (runs/eval_logs/agent_097_final_*.jsonl).
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_097/agent_097_final.zip"
+# Warm-start checkpoint: agent_098's final snapshot — heal frozen (nurse-facing 10/10 badge),
+# Center door 3/10, gym lv15 9/10, nav 9/10 (certified 2026-07-15, runs/eval_logs/agent_098_*).
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_098/agent_098_final.zip"
