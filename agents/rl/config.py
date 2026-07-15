@@ -1,14 +1,14 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Current run: slide the heal reverse-curriculum one rung outward. agent_098 froze the heal:
-# from the nurse-facing state the frozen checkpoint initiates the dialog, heals, walks to the gym
-# and takes the badge 10/10 (~1.8k steps, 0 losses) — the first frozen heal->fight->badge chain in
-# the project. From the Center door it's 3/10 and from the street 0; so the mastered mid-dialog
-# rung retires and a low-HP Violet street state (harvested cell, lead lv 13 at 7/40 HP, only
-# Falkner left) joins: street -> Center door -> nurse -> gym is now the chain under training.
+# Current run: add the missing gradient TOWARD the nurse. agent_099 showed the ladder stalling:
+# the frozen chain is 9/10 with the reset facing the nurse but 0-1/10 from one room away — the
+# heal reward only fires AT the nurse, so nothing pulls the policy through the Center door and
+# the corridor macro wins. Fix is the mechanism that solved the egg backtrack: a latched
+# breadcrumb (+2.0, env/rewards.py) for entering the Pokemon Center hurt (hp < 0.5). Same
+# curriculum ladder as agent_099, warm-start from its final.
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_099"
+RUN_NAME = "agent_100"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -51,7 +51,7 @@ VISITED_OBS         = True     # add a 48x48 crop of this episode's visited tile
 # A fraction of resets restart from save-states sampled from the policy's own trajectory, which
 # manufactures the state diversity 12 envs alone can't reach across the Route 29 bottleneck.
 FRONTIER_ENABLED   = True
-FRONTIER_SEED_FROM = "runs/frontier_archive/agent_098"  # carries the Center-interior cells forward
+FRONTIER_SEED_FROM = "runs/frontier_archive/agent_099"  # carries the Center-interior cells forward
 FRONTIER_N_ENVS    = 4                          # dedicated frontier envs; the other 8 are pure-start
 FRONTIER_P         = 1.0                         # reset probability for a frontier env (start envs are 0)
 FRONTIER_MAX_STEPS = 8000                        # truncate a frontier episode past this many steps
@@ -77,6 +77,6 @@ CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS f
                                    # (tight: late-training collapse means the best checkpoint is
                                    # rarely the last — keep fine recovery points)
 
-# Warm-start checkpoint: agent_098's final snapshot — heal frozen (nurse-facing 10/10 badge),
-# Center door 3/10, gym lv15 9/10, nav 9/10 (certified 2026-07-15, runs/eval_logs/agent_098_*).
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_098/agent_098_final.zip"
+# Warm-start checkpoint: agent_099's final snapshot — nurse-facing 9/10, gym lv15 9/10,
+# true-start nav 10/10 (certified 2026-07-15, runs/eval_logs/agent_099_*).
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_099/agent_099_final.zip"

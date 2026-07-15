@@ -213,6 +213,17 @@ def compute_reward(ram_state, prev_state, new_tile, visited_maps, episode_maps,
                 and current_map not in reward_maxes["return_waypoints"]):
             events += RETURN_BREADCRUMBS[current_map]
             reward_maxes["return_waypoints"].add(current_map)
+        # Heal breadcrumb: fires on entering the Pokemon Center HURT, latched per episode — the
+        # same factorization that solved the egg backtrack, applied to the heal detour. The +2.0
+        # heal reward only fires AT the nurse, so nothing pulls the policy through the Center door:
+        # certified on agent_099 (2026-07-15), the frozen heal->fight->badge chain is 9/10 when
+        # the reset faces the nurse but 0-1/10 from one room away. Gated on low HP so a healthy
+        # walk-through pays nothing, positive-only and latched so it can't be cycled.
+        if (reward_maxes is not None and current_map == VIOLET_POKECENTER
+                and ram_state["hp_ratio"] < 0.5
+                and not reward_maxes.get("center_entry_rewarded", False)):
+            events += 2.0
+            reward_maxes["center_entry_rewarded"] = True
 
     # ── Max-based progress rewards (need persistent per-episode running maxima)
     if reward_maxes is not None:
