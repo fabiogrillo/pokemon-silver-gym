@@ -138,10 +138,15 @@ Isolating that last gap took two more runs and one decisive diagnostic, and the 
 Which closes the loop on a design irony: the reward function had carried a heal bonus all along
 ("+2.0 for a >0.4 HP jump outside battle — encourages Pokémon Center use before the gym"), but the
 confine-to-corridor termination made it unreachable dead code: the Violet Pokémon Center was not
-in the legal corridor, so stepping through its door ended the episode. `agent_095` (in training)
-adds the Center to the corridor — its interior tiles pay the one-time new-tile income that lures
-the policy through the door, and the heal reward pays for the nurse — to learn the human routine:
-heal, then fight.
+in the legal corridor, so stepping through its door ended the episode. `agent_095` opened the
+Center (whitelisted its interior so new-tile income lures the policy through the door, with the
+heal reward paying for the nurse) and trained 15M steps on it. The policy did discover the
+building — the frontier archive harvested 13 cells inside — but the run is a failure: instead of
+adding a heal detour to the consolidated route, the new income source destabilized the whole
+policy, and already by the 5M checkpoint both corridor navigation (3/10) and the lv-15 fight
+(2/10) had eroded. Composing "heal, then fight" into the existing behavior — without breaking
+that behavior — is the open problem this project ends on; the best frozen checkpoints remain
+`agent_092`/`agent_094`, and the badge gap is fully characterized even if not yet closed.
 
 ### The gym fight: solved separately
 
@@ -194,7 +199,7 @@ tactical reasoning holds up in the small, it's the long-horizon execution that n
 
 | | Best result from the New Bark start | Reaches Violet Gym | Beats Falkner |
 |---|---|---|---|
-| **RL** (`agent_092`/`agent_094`, fine-tuned) | full corridor | yes, 10/10 as a **frozen checkpoint** (offline) | 10/10 from the gym start (same frozen checkpoint); end-to-end blocked only by arrival HP — heal-unlock run in training |
+| **RL** (`agent_092`/`agent_094`, fine-tuned) | full corridor | yes, 10/10 as a **frozen checkpoint** (offline) | 10/10 from the gym start (same frozen checkpoint); end-to-end 0/10, blocked only by arrival HP (8/10 from the same arrival state with full HP) |
 | **LLM** (`qwen3-vl:8b`, 6 attempts) | Route 30 (2/6 maps) | no | no (beats both bird keepers from a gym start, stalls on Falkner) |
 
 ## A note on reading the game's memory

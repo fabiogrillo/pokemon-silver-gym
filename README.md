@@ -127,8 +127,9 @@ trainer battles won, badge obtained.
 - **Gym fight: solved in the same checkpoint** — 10/10 badge from the gym save state, frozen. The
   end-to-end weld is down to one certified variable: the corridor delivers the agent at ~half HP,
   and the identical arrival state wins 8/10 with full HP vs 0/10 without. Healing was
-  architecturally impossible (the Pokémon Center sat outside the legal corridor); the heal-unlock
-  run is training.
+  architecturally impossible (the Pokémon Center sat outside the legal corridor); opening it and
+  fine-tuning destabilized the consolidated policy instead of adding the heal detour — composing
+  the two behaviors is the open problem the project ends on (see `EXPERIMENTS.md`).
 
 ## LLM agent — ReAct (local vision + text)
 
@@ -147,7 +148,7 @@ trainer battles won, badge obtained.
 
 | | Best result from the New Bark start | Reaches Violet Gym | Beats Falkner |
 |---|---|---|---|
-| **RL** (`agent_092`/`agent_094`) | full corridor | yes, 10/10 (frozen checkpoint, offline) | 10/10 from the gym start; end-to-end blocked only by arrival HP (heal-unlock run in training) |
+| **RL** (`agent_092`/`agent_094`) | full corridor | yes, 10/10 (frozen checkpoint, offline) | 10/10 from the gym start; end-to-end 0/10, blocked only by arrival HP (8/10 with full HP from the same arrival state) |
 | **LLM** (`qwen3-vl:8b`, 6 attempts) | Route 30 (2/6 maps) | no | no |
 
 Numbers are produced by `agents/rl/evaluate_cnn.py` (RL) and `agents/llm/run.py` (LLM), joined by
@@ -213,8 +214,8 @@ python -m pytest tests/ -q
       checkpoint (fine-tune campaign `agent_091`→`094` from `agent_090`)
 - [x] **LLM agent** — vision + ReAct + tool-calling + sprite-aware A* over Ollama (`qwen3-vl:8b`)
 - [x] RL vs LLM comparison + `docker compose` packaging for both agents
-- [ ] End-to-end badge from a single policy — blocker certified to be arrival HP; the
-      Pokémon-Center unlock (`agent_095`) is training toward it
+- [ ] End-to-end badge from a single policy — blocker certified to be arrival HP; the first
+      heal-unlock attempt (`agent_095`) destabilized the policy instead (see `EXPERIMENTS.md`)
 
 ---
 
