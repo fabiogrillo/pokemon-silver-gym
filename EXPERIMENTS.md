@@ -144,9 +144,40 @@ heal reward paying for the nurse) and trained 15M steps on it. The policy did di
 building — the frontier archive harvested 13 cells inside — but the run is a failure: instead of
 adding a heal detour to the consolidated route, the new income source destabilized the whole
 policy, and already by the 5M checkpoint both corridor navigation (3/10) and the lv-15 fight
-(2/10) had eroded. Composing "heal, then fight" into the existing behavior — without breaking
-that behavior — is the open problem this project ends on; the best frozen checkpoints remain
-`agent_092`/`agent_094`, and the badge gap is fully characterized even if not yet closed.
+(2/10) had eroded.
+
+### Teaching the heal (agents 096–100)
+
+The heal campaign that followed is the project's cleanest study in what does and doesn't make it
+into frozen weights. First finding: **the heal had never actually happened.** Two runs
+(`agent_096`/`097`, 30M steps) trained from harvested states inside the Center at low HP; their
+live badge_rate on those envs was ~1, everything looked like a consolidation problem — but the
+frontier archives contain not one post-fight full-HP cell. The live policy was simply beating
+Falkner at 7/40 HP; the heal reward never fired, so there was nothing to consolidate. (Diagnosing
+this by scripting the nurse interaction by hand also surfaced a real environment bug: PyBoy save
+states serialize the live joypad, and frontier cells are harvested mid-press, so loading one could
+leave a direction stuck — the game walks by itself and eats inputs. All state loads now release
+every button first.)
+
+The fix that worked is the egg lesson applied to an interaction instead of a traversal: a
+**reverse curriculum on the heal itself**, with manufactured save states sitting ON the
+interaction — mid-dialog with the nurse, facing the nurse, at the Center door. One run of that
+(`agent_098`) froze the chain: from the nurse-facing state the frozen checkpoint initiates the
+dialog, heals (0.17 → 1.0), walks out to the gym and takes the badge **10/10 in ~1.8k steps with
+zero losses** — the first frozen heal→fight→badge chain in the project, still 10/10 two runs
+later with the facing state kept as a retention rung.
+
+But the ladder stops one rung short, reproducibly. Sliding it outward (`agent_099`: add a low-HP
+Violet-street state) and bridging the reward desert with a latched enter-the-Center-hurt
+breadcrumb (`agent_100`, the same mechanism that solved the egg backtrack) both failed to freeze
+the missing skill: from the Center door or the street, the frozen policy walks past the nurse and
+re-runs its corridor macro every time (0/10), even while the facing rung stays at 10/10. The
+pattern across five runs is sharp: **rungs where the reset sits on the interaction freeze; the
+rung that requires HP-conditional navigation — go to the nurse *because* you are hurt — does
+not.** The consolidated route macro is the strongest basin in the policy, and a scalar HP feature
+in the state vector evidently cannot bend the CNN's navigation against it. That, precisely, is
+the open problem this project ends on; the best frozen checkpoints (`agent_097`–`100`) navigate
+10/10, win the gym 10/10, and execute the full heal chain when placed at its start.
 
 ### The gym fight: solved separately
 
@@ -199,7 +230,7 @@ tactical reasoning holds up in the small, it's the long-horizon execution that n
 
 | | Best result from the New Bark start | Reaches Violet Gym | Beats Falkner |
 |---|---|---|---|
-| **RL** (`agent_092`/`agent_094`, fine-tuned) | full corridor | yes, 10/10 as a **frozen checkpoint** (offline) | 10/10 from the gym start (same frozen checkpoint); end-to-end 0/10, blocked only by arrival HP (8/10 from the same arrival state with full HP) |
+| **RL** (`agent_094`–`100`, fine-tuned) | full corridor | yes, 10/10 as a **frozen checkpoint** (offline) | 10/10 from the gym start, and 10/10 through the full heal→fight→badge chain from the nurse; end-to-end 0/10 — the un-frozen skill is HP-conditional navigation to the nurse |
 | **LLM** (`qwen3-vl:8b`, 6 attempts) | Route 30 (2/6 maps) | no | no (beats both bird keepers from a gym start, stalls on Falkner) |
 
 ## A note on reading the game's memory
