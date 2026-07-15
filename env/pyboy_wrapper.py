@@ -12,10 +12,19 @@ class PyBoyWrapper:
         try:
             with open(state_path, "rb") as f:
                 self.pyboy.load_state(f)
+            self._release_all_buttons()
             print(f"Loaded state from {state_path}")
         except Exception as e:
             print(f"Failed to load state from {state_path}: {e}")
             print("Insert a valid path for the save file.")
+
+    def _release_all_buttons(self):
+        """Clear the joypad after loading a state. Save states serialize the live joypad, and
+        frontier states are harvested mid-press, so a loaded state can carry a stuck direction:
+        the game then auto-walks on its own and eats subsequent inputs (found 2026-07-15 — a
+        Center state walked the player 4 tiles right and soft-locked input until A/B mashing)."""
+        for name in ACTIONS:
+            self.pyboy.button_release(name)
 
     def step(self, action, n=24, settle=0):
         """Press the button for `action`, advance `n` frames, release, then idle `settle` frames.
@@ -35,6 +44,7 @@ class PyBoyWrapper:
         """Reload the initial state and stabilize the emulator (120 ticks = 2s @ 60fps)."""
         with open(self.state_path, "rb") as f:
             self.pyboy.load_state(f)
+        self._release_all_buttons()
         self.pyboy.tick(count=120)
         return self.pyboy.screen.ndarray
 
@@ -49,6 +59,7 @@ class PyBoyWrapper:
         """Reset to a frontier save-state from the policy's own trajectory,
         instead of the fixed state file. Same stabilize-tick as reset()."""
         self.pyboy.load_state(io.BytesIO(data))
+        self._release_all_buttons()
         self.pyboy.tick(count=120)
         return self.pyboy.screen.ndarray
 
