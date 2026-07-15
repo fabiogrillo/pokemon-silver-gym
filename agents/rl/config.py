@@ -1,15 +1,15 @@
 # Training configuration for the CNN PPO agent (agents/rl/train_cnn.py).
-# Current run: make the heal a reachable success. agent_095 (open the Center, rely on exploration
-# income + the heal reward) destabilized the consolidated policy instead of teaching the detour —
-# the heal was too far from any success the policy could reach. But its frontier archive proves
-# the behavior occurred (cells inside the Center with a healed, full-HP party), so this run makes
-# it dense: curriculum envs start INSIDE the Pokemon Center, low HP, steps from the nurse, with
-# only Falkner (or one keeper + Falkner) left — the shortest possible heal -> fight -> badge
-# chain. Same reachable-success logic that solved the gym in isolation.
+# Current run: consolidate the heal. agent_096 (same Center-interior curriculum) learned the
+# heal -> fight -> badge chain LIVE (badge_rate ~1 on the Center envs) without eroding anything
+# (gym lv15 still 10/10 frozen), but the frozen checkpoint doesn't heal: probed from the Center at
+# 0.17 HP it walks straight past the nurse and re-runs its corridor macro (a full Violet -> New
+# Bark round trip). Same live-vs-frozen gap the navigation had at agent_090/091: nav needed ~15M
+# more steps of the unchanged recipe to freeze (agent_092). This run is that continuation for the
+# heal skill: identical recipe, warm-start from agent_096_final.
 
 # RUN_NAME drives every output path: checkpoints (runs/checkpoints/<RUN_NAME>/),
 # checkpoint filenames (<RUN_NAME>_<step>_steps.zip) and TensorBoard logs (runs/<RUN_NAME>_<N>/).
-RUN_NAME = "agent_096"
+RUN_NAME = "agent_097"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 ROM_PATH   = "pokemon_rom.gbc"
@@ -52,7 +52,7 @@ VISITED_OBS         = True     # add a 48x48 crop of this episode's visited tile
 # A fraction of resets restart from save-states sampled from the policy's own trajectory, which
 # manufactures the state diversity 12 envs alone can't reach across the Route 29 bottleneck.
 FRONTIER_ENABLED   = True
-FRONTIER_SEED_FROM = "runs/frontier_archive/agent_095"  # includes the 13 Center-interior cells
+FRONTIER_SEED_FROM = "runs/frontier_archive/agent_096"  # carries the Center-interior cells forward
 FRONTIER_N_ENVS    = 4                          # dedicated frontier envs; the other 8 are pure-start
 FRONTIER_P         = 1.0                         # reset probability for a frontier env (start envs are 0)
 FRONTIER_MAX_STEPS = 8000                        # truncate a frontier episode past this many steps
@@ -78,7 +78,6 @@ CHECKPOINT_FREQ_CNN = 2_500_000    # in timesteps; train_cnn divides by N_ENVS f
                                    # (tight: late-training collapse means the best checkpoint is
                                    # rarely the last — keep fine recovery points)
 
-# Warm-start checkpoint: agent_094's final snapshot (nav 9/10, gym lv15 10/10, and the certified
-# 8/10 full-HP lv-12 fight this run is meant to make reachable — see runs/eval_logs/). NOT
-# agent_095's weights: they are the destabilized ones.
-INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_094/agent_094_final.zip"
+# Warm-start checkpoint: agent_096's final snapshot (nav 9/10 + gym lv15 10/10 frozen, heal live
+# but not yet frozen — certified 2026-07-15, see runs/eval_logs/agent_096_final_*.jsonl).
+INIT_FROM_CHECKPOINT = "runs/checkpoints/agent_096/agent_096_final.zip"
