@@ -33,6 +33,16 @@ docker compose run --rm rl-agent
 It loads the pretrained gym agent from inside the Violet City Gym, climbs to Falkner, beats the two
 bird-keepers and Falkner, and prints the badge line — typically within ~840 steps.
 
+To watch the corridor navigation instead (New Bark → Violet Gym, the headline result), point the
+same service at the navigation checkpoint and the true-start save state:
+
+```bash
+docker compose run --rm \
+  -e MODEL=/app/assets/checkpoints/agent_097_final.zip \
+  -e STATE=/app/saves/egg_delivered_clean.state \
+  -e MAX_STEPS=20000 rl-agent
+```
+
 **LLM agent** — watch the local vision-LLM walk the New Bark → Violet corridor:
 
 ```bash
@@ -92,6 +102,7 @@ pokemon-silver-gym/
 ├── agents/comparison.py       # Join RL + LLM metrics
 ├── assets/collision/          # Per-map walkability grids (from the pokegold disassembly)
 ├── assets/maps/               # Stitched Johto map for the trajectory overlay
+├── assets/checkpoints/        # Demo checkpoints baked into the Docker image (gym + corridor)
 ├── Dockerfile / Dockerfile.llm # CPU images for the RL playback and the LLM agent
 ├── docker-compose.yml         # rl-agent + llm-agent + ollama sidecar
 ├── tests/                     # Unit + smoke tests

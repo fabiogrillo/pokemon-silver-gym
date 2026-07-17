@@ -17,7 +17,7 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app \
-    MODEL=/app/runs/checkpoints/agent_087/agent_087_final.zip \
+    MODEL=/app/assets/checkpoints/agent_087_final.zip \
     STATE=/app/saves/violet_city_gym.state \
     MAX_STEPS=6000
 
@@ -33,14 +33,16 @@ COPY requirements-play.txt .
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch \
     && pip install -r requirements-play.txt
 
-# Application code + map asset + save states. The ROM is mounted at runtime (not bundled — legal).
+# Application code + demo save states + the assets the agent needs at runtime (collision grids,
+# stitched map, demo checkpoints). Copied selectively so the comparison videos in assets/ don't
+# bloat the image. The ROM is mounted at runtime (not bundled — legal). The checkpoints live under
+# assets/ (not runs/) so the ./runs volume mount in docker-compose can't shadow them.
 COPY agents/ agents/
 COPY env/ env/
-COPY saves/ saves/
-COPY assets/ assets/
-
-# Bake the demo checkpoint into the image so `docker run` needs only the ROM.
-COPY runs/checkpoints/agent_087/agent_087_final.zip /app/runs/checkpoints/agent_087/agent_087_final.zip
+COPY saves/violet_city_gym.state saves/egg_delivered_clean.state saves/
+COPY assets/collision/ assets/collision/
+COPY assets/maps/ assets/maps/
+COPY assets/checkpoints/ assets/checkpoints/
 
 ENTRYPOINT ["python", "-m", "agents.rl.play"]
 CMD []

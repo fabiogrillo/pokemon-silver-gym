@@ -27,11 +27,13 @@ WORKDIR /app
 COPY requirements-llm.txt .
 RUN pip install -r requirements-llm.txt
 
-# Application code + collision grids + save states. The ROM is mounted at runtime (not bundled).
+# Application code + collision grids + demo save states, copied selectively so the comparison
+# videos in assets/ don't bloat the image. The ROM is mounted at runtime (not bundled).
 COPY agents/ agents/
 COPY env/ env/
-COPY saves/ saves/
-COPY assets/ assets/
+COPY saves/violet_city_gym.state saves/egg_delivered_clean.state saves/
+COPY assets/collision/ assets/collision/
+COPY assets/maps/ assets/maps/
 
 ENTRYPOINT ["python", "-m", "agents.llm.run"]
 CMD []

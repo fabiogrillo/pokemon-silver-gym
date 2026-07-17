@@ -17,7 +17,13 @@ saves/*.pkl
 *.state
 runs/
 saves/*.state
-!saves/totodile.state
+# Demo save states shipped for the Docker images (see Dockerfile / Dockerfile.llm)
+!saves/violet_city_gym.state
+!saves/egg_delivered_clean.state
 
 # Logs
 tests/debug.log
+
+# The full 10-minute comparison video is built locally (scratchpad render) and hosted
+# off-repo (LinkedIn/YouTube); only the short excerpt is committed.
+assets/comparison_full.mp4
