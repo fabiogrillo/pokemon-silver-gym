@@ -100,6 +100,8 @@ pokemon-silver-gym/
 │   └── run.py                 # Run one episode, write a JSONL trace
 │
 ├── agents/comparison.py       # Join RL + LLM metrics
+├── agents/make_comparison_gif.py    # Short side-by-side highlight montage (GIF + MP4)
+├── agents/make_comparison_video.py  # Full-length side-by-side video at true 4x speed
 ├── assets/collision/          # Per-map walkability grids (from the pokegold disassembly)
 ├── assets/maps/               # Stitched Johto map for the trajectory overlay
 ├── assets/checkpoints/        # Demo checkpoints baked into the Docker image (gym + corridor)
