@@ -3,7 +3,7 @@
 # Dockerfile from the PyTorch CPU wheel index, so it is intentionally NOT listed here.
 pyboy==2.7.1
 stable-baselines3==2.8.0
-gymnasium==1.3.0
+gymnasium==1.2.3
 numpy==2.4.4
 pillow==12.2.0
 imageio==2.37.3
