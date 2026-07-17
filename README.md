@@ -7,7 +7,7 @@ reinforcement-learning agent** trained from pixels; the other is a **local visio
 Game Boy environment, so the comparison is apples-to-apples: *learning by trial-and-error* against
 *reasoning about the goal*.
 
-![RL vs LLM — same game, same goal](assets/comparison.gif)
+![RL vs LLM — same game, same goal](assets/comparison_excerpt.gif)
 
 **The result:** the RL agent solves the overworld navigation the LLM cannot. From the New Bark start,
 the trained policy reaches the Violet Gym in **10/10 offline episodes as a frozen checkpoint**, and
@@ -231,8 +231,10 @@ python -m pytest tests/ -q
 - [x] RL vs LLM comparison + `docker compose` packaging for both agents
 - [x] **The heal chain frozen** — reverse curriculum on the nurse interaction: heal→fight→badge
       10/10 from the nurse-facing state (`agent_098`–`100`)
-- [ ] End-to-end badge from a single policy — every sub-skill is frozen and certified; the missing
-      weld is HP-conditional navigation to the nurse (see `EXPERIMENTS.md`)
+
+The one thing left open — an end-to-end badge from a single policy — is deliberately left as the
+project's open problem: every sub-skill is frozen and certified, and the missing weld is
+HP-conditional navigation to the nurse (see `EXPERIMENTS.md`).
 
 ---
 
